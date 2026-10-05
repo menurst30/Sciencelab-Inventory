@@ -1,0 +1,6 @@
+{
+  "name": "Science Lab Inventory",
+  "description": "Sistem manajemen inventaris laboratorium sains sekolah untuk memantau stok, kondisi, peminjaman, maintenance, dan restock perlengkapan lab.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
