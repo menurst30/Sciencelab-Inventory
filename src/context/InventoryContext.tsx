@@ -138,7 +138,11 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [currentUser, setCurrentUser] = useState<User>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.USER);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const matched = INITIAL_USERS.find((u) => u.userId === parsed.userId || u.email === parsed.email);
+        if (matched) return matched;
+      }
     } catch {
       // fallback
     }

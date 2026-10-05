@@ -30,32 +30,18 @@ export const DEFAULT_LOCATIONS: string[] = [
 
 export const INITIAL_USERS: User[] = [
   {
-    userId: 'usr-admin-1',
-    name: 'Ahmad Fauzi, S.Si.',
-    email: 'ahmad.lab@lazuardi.sch.id',
-    role: 'admin',
-    department: 'Kepala Laboratorium Sains',
-  },
-  {
-    userId: 'usr-teacher-menur',
-    name: 'Tr. Menur',
+    userId: 'usr-admin-menur',
+    name: 'Menurseto Mawaddah, S.Pd',
     email: 'menur@lazuardi.sch.id',
-    role: 'teacher',
-    department: "Tr. Menur's Class - Science & Project",
+    role: 'admin',
+    department: 'Kepala Laboratorium Science dan Science Teacher',
   },
   {
     userId: 'usr-teacher-susi',
-    name: 'Tr. Susi',
+    name: 'Susiyanti Wedya, S.Pd',
     email: 'susi@lazuardi.sch.id',
     role: 'teacher',
-    department: "Tr. Susi's Class - Science & Environment",
-  },
-  {
-    userId: 'usr-teacher-hendra',
-    name: 'Bpk. Hendra Wijaya, M.Pd.',
-    email: 'hendra.fisika@lazuardi.sch.id',
-    role: 'teacher',
-    department: 'Guru Fisika SMP/SMA',
+    department: 'Science Teacher',
   },
 ];
 
@@ -393,8 +379,8 @@ export const INITIAL_ITEMS: InventoryItem[] = [
 export const INITIAL_BORROWS: BorrowRecord[] = [
   {
     borrowId: 'bor-001',
-    borrowerId: 'usr-teacher-menur',
-    borrowerName: 'Tr. Menur',
+    borrowerId: 'usr-admin-menur',
+    borrowerName: 'Menurseto Mawaddah, S.Pd',
     borrowerRole: "Tr. Menur's Class",
     itemId: 'item-007',
     itemCode: 'LAB-URB-001',
@@ -411,7 +397,7 @@ export const INITIAL_BORROWS: BorrowRecord[] = [
   {
     borrowId: 'bor-002',
     borrowerId: 'usr-teacher-susi',
-    borrowerName: 'Tr. Susi',
+    borrowerName: 'Susiyanti Wedya, S.Pd',
     borrowerRole: "Tr. Susi's Class",
     itemId: 'item-002',
     itemCode: 'LAB-FIS-001',
@@ -427,8 +413,8 @@ export const INITIAL_BORROWS: BorrowRecord[] = [
   },
   {
     borrowId: 'bor-003',
-    borrowerId: 'usr-teacher-menur',
-    borrowerName: 'Tr. Menur',
+    borrowerId: 'usr-admin-menur',
+    borrowerName: 'Menurseto Mawaddah, S.Pd',
     borrowerRole: "Tr. Menur's Class",
     itemId: 'item-009',
     itemCode: 'LAB-URB-003',
@@ -504,7 +490,7 @@ export const INITIAL_AUDIT_LOGS: AuditLog[] = [
   {
     logId: 'log-001',
     timestamp: '2026-10-04T09:20:00Z',
-    actorName: 'Ahmad Fauzi, S.Si.',
+    actorName: 'Menurseto Mawaddah, S.Pd',
     actorRole: 'Admin Lab',
     entityType: 'Restock',
     action: 'CREATE_RESTOCK',
@@ -517,13 +503,13 @@ export const INITIAL_AUDIT_LOGS: AuditLog[] = [
   {
     logId: 'log-002',
     timestamp: '2026-10-02T08:00:00Z',
-    actorName: 'Tr. Menur',
+    actorName: 'Menurseto Mawaddah, S.Pd',
     actorRole: 'Guru / Peminjam',
     entityType: 'Borrow',
     action: 'BORROW_ITEM',
     itemId: 'item-007',
     itemCode: 'LAB-URB-001',
-    description: 'Peminjaman 1 set Kit Hidroponik Tower oleh Tr. Menur untuk proyek kelas',
+    description: 'Peminjaman 1 set Kit Hidroponik Tower oleh Menurseto Mawaddah, S.Pd untuk proyek kelas',
     previousValue: 'Available: 4',
     newValue: 'Available: 3, Borrowed: 1',
   },
