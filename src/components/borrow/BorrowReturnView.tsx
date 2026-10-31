@@ -42,9 +42,9 @@ export const BorrowReturnView: React.FC = () => {
 
   // New Borrow Form State
   const [borrowForm, setBorrowForm] = useState({
-    borrowerName: currentUser.name,
-    borrowerRole: currentUser.department,
-    borrowerId: currentUser.userId,
+    borrowerName: currentUser?.name || 'Peminjam',
+    borrowerRole: currentUser?.department || 'Guru / Peminjam',
+    borrowerId: currentUser?.userId || 'usr-borrower',
     itemId: '',
     quantity: 1,
     borrowDate: new Date().toISOString().split('T')[0],
@@ -124,9 +124,9 @@ export const BorrowReturnView: React.FC = () => {
 
   const handleOpenBorrowModal = () => {
     setBorrowForm({
-      borrowerName: currentUser.name,
-      borrowerRole: currentUser.department,
-      borrowerId: currentUser.userId,
+      borrowerName: currentUser?.name || 'Peminjam',
+      borrowerRole: currentUser?.department || 'Guru / Peminjam',
+      borrowerId: currentUser?.userId || 'usr-borrower',
       itemId: borrowableItems.find((i) => i.availableQuantity > 0)?.itemId || '',
       quantity: 1,
       borrowDate: new Date().toISOString().split('T')[0],

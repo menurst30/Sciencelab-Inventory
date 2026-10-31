@@ -1,0 +1,156 @@
+{
+  "entities": {
+    "inventoryItem": {
+      "title": "Inventory Item",
+      "description": "Lab equipment, chemicals, household, or urban gardening tools",
+      "type": "object",
+      "properties": {
+        "itemId": { "type": "string" },
+        "itemCode": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "condition": { "type": "string", "enum": ["Good", "Fair", "Damaged", "Under Maintenance", "Hilang"] },
+        "location": { "type": "string" },
+        "minimumStock": { "type": "number" },
+        "supplier": { "type": "string" },
+        "purchaseDate": { "type": "string" },
+        "unitPurchasePrice": { "type": "number" },
+        "notes": { "type": "string" },
+        "status": { "type": "string", "enum": ["Active", "Archived"] },
+        "targetStock": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["itemId", "itemCode", "name", "category", "quantity", "unit", "condition", "location", "minimumStock", "status"]
+    },
+    "borrowRecord": {
+      "title": "Borrow Record",
+      "description": "Records of equipment borrowed and returned by teachers/students",
+      "type": "object",
+      "properties": {
+        "borrowId": { "type": "string" },
+        "borrowerId": { "type": "string" },
+        "borrowerName": { "type": "string" },
+        "borrowerRole": { "type": "string" },
+        "itemId": { "type": "string" },
+        "itemCode": { "type": "string" },
+        "itemName": { "type": "string" },
+        "quantity": { "type": "number" },
+        "borrowDate": { "type": "string" },
+        "purpose": { "type": "string" },
+        "expectedReturnDate": { "type": "string" },
+        "actualReturnDate": { "type": "string" },
+        "returnCondition": { "type": "string", "enum": ["Good", "Fair", "Damaged", "Hilang"] },
+        "status": { "type": "string", "enum": ["Borrowed", "Returned", "Overdue"] },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["borrowId", "borrowerName", "itemId", "itemCode", "itemName", "quantity", "borrowDate", "expectedReturnDate", "purpose", "status"]
+    },
+    "maintenanceRecord": {
+      "title": "Maintenance Record",
+      "description": "Maintenance and repair tracking for damaged laboratory gear",
+      "type": "object",
+      "properties": {
+        "maintenanceId": { "type": "string" },
+        "itemId": { "type": "string" },
+        "itemCode": { "type": "string" },
+        "itemName": { "type": "string" },
+        "quantity": { "type": "number" },
+        "damageDescription": { "type": "string" },
+        "repairStatus": { "type": "string", "enum": ["Reported", "In Repair", "Repaired", "Not Repairable"] },
+        "reportedDate": { "type": "string" },
+        "pic": { "type": "string" },
+        "repairCost": { "type": "number" },
+        "notes": { "type": "string" },
+        "resolvedDate": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["maintenanceId", "itemId", "itemCode", "itemName", "quantity", "damageDescription", "repairStatus", "reportedDate", "pic"]
+    },
+    "restockRecord": {
+      "title": "Restock Record",
+      "description": "Restock requests, purchase orders, and receiving records",
+      "type": "object",
+      "properties": {
+        "restockId": { "type": "string" },
+        "itemId": { "type": "string" },
+        "itemCode": { "type": "string" },
+        "itemName": { "type": "string" },
+        "category": { "type": "string" },
+        "currentStock": { "type": "number" },
+        "minimumStock": { "type": "number" },
+        "targetStock": { "type": "number" },
+        "recommendedQuantity": { "type": "number" },
+        "status": { "type": "string", "enum": ["To Buy", "Ordered", "Received"] },
+        "supplier": { "type": "string" },
+        "orderedDate": { "type": "string" },
+        "receivedDate": { "type": "string" },
+        "receivedQuantity": { "type": "number" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["restockId", "itemId", "itemCode", "itemName", "recommendedQuantity", "status"]
+    },
+    "auditLog": {
+      "title": "Audit Log",
+      "description": "Historical log of inventory operations and transactions",
+      "type": "object",
+      "properties": {
+        "logId": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "actorName": { "type": "string" },
+        "actorRole": { "type": "string" },
+        "entityType": { "type": "string", "enum": ["Inventory", "Borrow", "Maintenance", "Restock"] },
+        "action": { "type": "string" },
+        "itemId": { "type": "string" },
+        "itemCode": { "type": "string" },
+        "description": { "type": "string" },
+        "previousValue": { "type": "string" },
+        "newValue": { "type": "string" }
+      },
+      "required": ["logId", "timestamp", "actorName", "actorRole", "entityType", "action", "description"]
+    },
+    "appSettings": {
+      "title": "App Settings",
+      "description": "Dynamic categories, locations, and app configuration",
+      "type": "object",
+      "properties": {
+        "categories": { "type": "array", "items": { "type": "string" } },
+        "locations": { "type": "array", "items": { "type": "string" } },
+        "updatedAt": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/inventoryItems/{itemId}": {
+      "schema": "inventoryItem",
+      "description": "Inventory items and laboratory equipment collection"
+    },
+    "/borrowRecords/{borrowId}": {
+      "schema": "borrowRecord",
+      "description": "Peminjaman and pengembalian records"
+    },
+    "/maintenanceRecords/{maintenanceId}": {
+      "schema": "maintenanceRecord",
+      "description": "Maintenance and repair tracking records"
+    },
+    "/restockRecords/{restockId}": {
+      "schema": "restockRecord",
+      "description": "Restock and purchase order records"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "auditLog",
+      "description": "Audit trail log records"
+    },
+    "/settings/{settingsId}": {
+      "schema": "appSettings",
+      "description": "Global settings for categories and locations"
+    }
+  }
+}

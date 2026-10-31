@@ -8,7 +8,11 @@ import {
   RotateCcw,
   FileSpreadsheet,
   ChevronDown,
-  Sparkles,
+  Cloud,
+  CloudOff,
+  RefreshCw,
+  LogOut,
+  Mail,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -22,9 +26,13 @@ export const Header: React.FC<HeaderProps> = ({ onShowAudit, showAudit }) => {
     setCurrentUser,
     availableUsers,
     isStaff,
+    logout,
     resetToSampleData,
     exportDataJSON,
     exportInventoryCSV,
+    isFirebaseConnected,
+    isSyncing,
+    firestoreError,
   } = useInventory();
 
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -50,6 +58,22 @@ export const Header: React.FC<HeaderProps> = ({ onShowAudit, showAudit }) => {
                 <span className="text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800/80">
                   SMART LAB
                 </span>
+                {isSyncing ? (
+                  <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-amber-400 bg-amber-950/60 border border-amber-800/60 px-2 py-0.5 rounded-full">
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                    <span>Sinkronisasi Cloud...</span>
+                  </span>
+                ) : isFirebaseConnected ? (
+                  <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-full" title="Terkoneksi ke Firebase Firestore">
+                    <Cloud className="w-2.5 h-2.5 text-emerald-400" />
+                    <span>Firebase Aktif</span>
+                  </span>
+                ) : (
+                  <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-rose-400 bg-rose-950/60 border border-rose-800/60 px-2 py-0.5 rounded-full" title={firestoreError || 'Firebase offline'}>
+                    <CloudOff className="w-2.5 h-2.5 text-rose-400" />
+                    <span>Mode Offline</span>
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400 hidden sm:block">
                 Manajemen Inventaris Alat & Bahan Laboratorium Sains Sekolah
@@ -105,16 +129,24 @@ export const Header: React.FC<HeaderProps> = ({ onShowAudit, showAudit }) => {
                 onClick={() => setShowUserMenu(!showUserMenu)}
                 className="flex items-center gap-2.5 bg-slate-800 hover:bg-slate-750 px-3 py-1.5 rounded-xl border border-slate-700 text-left transition-colors"
               >
-                <div
-                  className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold ${
-                    isStaff ? 'bg-emerald-600 text-white' : 'bg-sky-600 text-white'
-                  }`}
-                >
-                  {isStaff ? <ShieldCheck className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
-                </div>
+                {currentUser?.photoURL ? (
+                  <img
+                    src={currentUser.photoURL}
+                    alt={currentUser.name}
+                    className="w-7 h-7 rounded-lg object-cover border border-slate-600"
+                  />
+                ) : (
+                  <div
+                    className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold ${
+                      isStaff ? 'bg-emerald-600 text-white' : 'bg-sky-600 text-white'
+                    }`}
+                  >
+                    {isStaff ? <ShieldCheck className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+                  </div>
+                )}
                 <div className="hidden sm:block">
                   <div className="text-xs font-semibold text-white leading-tight flex items-center gap-1.5">
-                    {currentUser.name}
+                    {currentUser?.name || 'Pengguna'}
                     <span
                       className={`text-[9px] font-bold uppercase px-1.5 py-0.2 rounded ${
                         isStaff
@@ -122,10 +154,12 @@ export const Header: React.FC<HeaderProps> = ({ onShowAudit, showAudit }) => {
                           : 'bg-sky-950 text-sky-300 border border-sky-800'
                       }`}
                     >
-                      {isStaff ? 'Admin / Staf' : 'Guru'}
+                      {isStaff ? 'Admin Lab (Full)' : 'Guru (Borrow Only)'}
                     </span>
                   </div>
-                  <div className="text-[11px] text-slate-400">{currentUser.department}</div>
+                  <div className="text-[11px] text-slate-400 font-mono truncate max-w-[180px]">
+                    {currentUser?.email}
+                  </div>
                 </div>
                 <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
               </button>
@@ -134,17 +168,33 @@ export const Header: React.FC<HeaderProps> = ({ onShowAudit, showAudit }) => {
               {showUserMenu && (
                 <>
                   <div className="fixed inset-0 z-20" onClick={() => setShowUserMenu(false)} />
-                  <div className="absolute right-0 mt-2 w-72 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl py-2 z-30">
-                    <div className="px-3 py-2 border-b border-slate-700/60">
-                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                        Ganti Pengguna & Role
+                  <div className="absolute right-0 mt-2 w-80 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl py-2 z-30 divide-y divide-slate-700/60">
+                    {/* Active Profile Info */}
+                    <div className="px-4 py-3">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                        Akun Terautentikasi
                       </p>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        Pilih profil untuk menguji hak akses Staf Lab vs Guru Peminjam.
-                      </p>
+                      <div className="font-semibold text-sm text-white">{currentUser?.name}</div>
+                      <div className="text-xs text-slate-300 font-mono mt-0.5">{currentUser?.email}</div>
+                      <div className="text-[11px] text-slate-400 mt-1">{currentUser?.department}</div>
+                      <div className="mt-2.5">
+                        {isStaff ? (
+                          <div className="text-[11px] text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2.5 py-1.5 rounded-lg">
+                            ✓ <strong>Hak Akses Administrator:</strong> Akses penuh kelola inventaris, maintenance, restock, peminjaman, & audit trail.
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-sky-300 bg-sky-950/80 border border-sky-800/80 px-2.5 py-1.5 rounded-lg">
+                            ℹ <strong>Hak Akses Guru (@lazuardi.sch.id):</strong> Dapat mengisi transaksi Borrow & Return; modul lain adalah <em>View-Only</em>.
+                          </div>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="py-1">
+                    {/* Quick Account Switcher (Testing) */}
+                    <div className="py-2 px-2">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 mb-1.5">
+                        Uji Coba Ganti Profil (Preview)
+                      </p>
                       {availableUsers.map((user) => (
                         <button
                           key={user.userId}
@@ -152,39 +202,39 @@ export const Header: React.FC<HeaderProps> = ({ onShowAudit, showAudit }) => {
                             setCurrentUser(user);
                             setShowUserMenu(false);
                           }}
-                          className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-700/70 transition-colors ${
-                            currentUser.userId === user.userId ? 'bg-slate-700/50 text-emerald-400' : 'text-slate-200'
+                          className={`w-full text-left px-2.5 py-2 rounded-lg text-xs flex items-center justify-between hover:bg-slate-700/70 transition-colors ${
+                            currentUser?.email === user.email ? 'bg-slate-700/50 text-emerald-400 font-semibold' : 'text-slate-200'
                           }`}
                         >
                           <div>
-                            <div className="font-semibold">{user.name}</div>
-                            <div className="text-[11px] text-slate-400">{user.department}</div>
+                            <div className="font-medium text-white">{user.name}</div>
+                            <div className="text-[10px] text-slate-400 font-mono">{user.email}</div>
                           </div>
                           <span
-                            className={`text-[10px] px-2 py-0.5 rounded font-medium ${
+                            className={`text-[9px] px-2 py-0.5 rounded font-bold uppercase ${
                               user.role === 'admin'
-                                ? 'bg-emerald-900/60 text-emerald-300'
-                                : 'bg-sky-900/60 text-sky-300'
+                                ? 'bg-emerald-900/60 text-emerald-300 border border-emerald-800'
+                                : 'bg-sky-900/60 text-sky-300 border border-sky-800'
                             }`}
                           >
-                            {user.role === 'admin' ? 'Staf Lab' : 'Guru'}
+                            {user.role === 'admin' ? 'Admin' : 'Guru'}
                           </span>
                         </button>
                       ))}
                     </div>
 
-                    <div className="border-t border-slate-700/60 pt-2 px-3 pb-1">
-                      <div className="text-[11px] text-slate-400">
-                        {isStaff ? (
-                          <span className="text-emerald-400">
-                            ✓ Akses Penuh: Tambah, edit, maintenance, restock & peminjaman.
-                          </span>
-                        ) : (
-                          <span className="text-sky-300">
-                            ℹ Akses Guru: Melihat ketersediaan & mengajukan peminjaman.
-                          </span>
-                        )}
-                      </div>
+                    {/* Logout Button */}
+                    <div className="p-2">
+                      <button
+                        onClick={() => {
+                          setShowUserMenu(false);
+                          logout();
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs font-semibold text-rose-400 hover:text-white hover:bg-rose-950/70 rounded-lg flex items-center gap-2 transition-colors"
+                      >
+                        <LogOut className="w-4 h-4 text-rose-400" />
+                        <span>Keluar / Logout Akun Google</span>
+                      </button>
                     </div>
                   </div>
                 </>

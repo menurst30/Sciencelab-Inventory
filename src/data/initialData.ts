@@ -34,14 +34,21 @@ export const INITIAL_USERS: User[] = [
     name: 'Menurseto Mawaddah, S.Pd',
     email: 'menur@lazuardi.sch.id',
     role: 'admin',
-    department: 'Kepala Laboratorium Science dan Science Teacher',
+    department: 'Kepala Laboratorium Science & Science Teacher',
   },
   {
-    userId: 'usr-teacher-susi',
+    userId: 'usr-admin-susi',
     name: 'Susiyanti Wedya, S.Pd',
     email: 'susi@lazuardi.sch.id',
+    role: 'admin',
+    department: 'Science Teacher & Admin Laboratorium',
+  },
+  {
+    userId: 'usr-teacher-sample',
+    name: 'Guru Sains Lazuardi',
+    email: 'guru.science@lazuardi.sch.id',
     role: 'teacher',
-    department: 'Science Teacher',
+    department: 'Guru Sains / Peminjam Lab',
   },
 ];
 

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
   InventoryItem,
   BorrowRecord,
@@ -6,8 +6,6 @@ import {
   RestockRecord,
   AuditLog,
   User,
-  UserRole,
-  ItemCondition,
   CalculatedItemStock,
 } from '../types/inventory';
 import {
@@ -20,13 +18,42 @@ import {
   DEFAULT_CATEGORIES,
   DEFAULT_LOCATIONS,
 } from '../data/initialData';
+import {
+  db,
+  auth,
+  handleFirestoreError,
+  testFirestoreConnection,
+} from '../lib/firebase';
+import {
+  signInWithPopup,
+  GoogleAuthProvider,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+} from 'firebase/auth';
+import { ALLOWED_DOMAIN, ADMIN_EMAILS } from '../types/inventory';
+import {
+  collection,
+  doc,
+  setDoc,
+  updateDoc,
+  onSnapshot,
+  getDocs,
+  writeBatch,
+} from 'firebase/firestore';
 
 interface InventoryContextType {
-  // Current user & role
-  currentUser: User;
-  setCurrentUser: (user: User) => void;
+  // Current user & authentication
+  currentUser: User | null;
+  setCurrentUser: (user: User | null) => void;
   availableUsers: User[];
   isStaff: boolean;
+  isAuthenticated: boolean;
+  authLoading: boolean;
+  authError: string | null;
+  setAuthError: (err: string | null) => void;
+  loginWithGoogle: () => Promise<{ success: boolean; error?: string }>;
+  logout: () => Promise<void>;
+  loginWithQuickAccount: (email: string) => Promise<{ success: boolean; error?: string }>;
 
   // Raw data
   items: InventoryItem[];
@@ -40,6 +67,11 @@ interface InventoryContextType {
   locations: string[];
   addCategory: (categoryName: string) => void;
   addLocation: (locationName: string) => void;
+
+  // Cloud & Firebase status
+  isFirebaseConnected: boolean;
+  isSyncing: boolean;
+  firestoreError: string | null;
 
   // Stock calculation helpers
   getItemStockInfo: (itemId: string) => CalculatedItemStock;
@@ -134,20 +166,42 @@ const STORAGE_KEYS = {
 const InventoryContext = createContext<InventoryContextType | undefined>(undefined);
 
 export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Current user state
-  const [currentUser, setCurrentUser] = useState<User>(() => {
+  // Cloud & connection state
+  const [isFirebaseConnected, setIsFirebaseConnected] = useState<boolean>(true);
+  const [isSyncing, setIsSyncing] = useState<boolean>(true);
+  const [firestoreError, setFirestoreError] = useState<string | null>(null);
+
+  // Current user & authentication state
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.USER);
       if (saved) {
-        const parsed = JSON.parse(saved);
-        const matched = INITIAL_USERS.find((u) => u.userId === parsed.userId || u.email === parsed.email);
-        if (matched) return matched;
+        const parsed: User = JSON.parse(saved);
+        if (parsed && parsed.email?.toLowerCase().endsWith(ALLOWED_DOMAIN)) {
+          return parsed;
+        }
       }
     } catch {
       // fallback
     }
-    return INITIAL_USERS[0];
+    return null;
   });
+
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.USER);
+      if (saved) {
+        const parsed: User = JSON.parse(saved);
+        return Boolean(parsed && parsed.email?.toLowerCase().endsWith(ALLOWED_DOMAIN));
+      }
+    } catch {
+      // fallback
+    }
+    return false;
+  });
+
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // Items
   const [items, setItems] = useState<InventoryItem[]>(() => {
@@ -166,9 +220,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const saved = localStorage.getItem(STORAGE_KEYS.CATEGORIES);
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Merge with defaults to ensure all required are present
-        const merged = Array.from(new Set([...DEFAULT_CATEGORIES, ...parsed]));
-        return merged;
+        return Array.from(new Set([...DEFAULT_CATEGORIES, ...parsed]));
       }
     } catch {
       // fallback
@@ -182,9 +234,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const saved = localStorage.getItem(STORAGE_KEYS.LOCATIONS);
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Merge with defaults to ensure all required are present
-        const merged = Array.from(new Set([...DEFAULT_LOCATIONS, ...parsed]));
-        return merged;
+        return Array.from(new Set([...DEFAULT_LOCATIONS, ...parsed]));
       }
     } catch {
       // fallback
@@ -236,107 +286,423 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return INITIAL_AUDIT_LOGS;
   });
 
-  // Sync to localStorage
+  // Local storage caching for offline resilience
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items));
-    } catch (e) {
-      console.error('Failed to save items to storage', e);
-    }
+    } catch { /* ignore */ }
   }, [items]);
 
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(categories));
-    } catch (e) {
-      console.error('Failed to save categories to storage', e);
-    }
+    } catch { /* ignore */ }
   }, [categories]);
 
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.LOCATIONS, JSON.stringify(locations));
-    } catch (e) {
-      console.error('Failed to save locations to storage', e);
-    }
+    } catch { /* ignore */ }
   }, [locations]);
 
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.BORROWS, JSON.stringify(borrows));
-    } catch (e) {
-      console.error('Failed to save borrows to storage', e);
-    }
+    } catch { /* ignore */ }
   }, [borrows]);
 
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.MAINTENANCE, JSON.stringify(maintenance));
-    } catch (e) {
-      console.error('Failed to save maintenance to storage', e);
-    }
+    } catch { /* ignore */ }
   }, [maintenance]);
 
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.RESTOCKS, JSON.stringify(restocks));
-    } catch (e) {
-      console.error('Failed to save restocks to storage', e);
-    }
+    } catch { /* ignore */ }
   }, [restocks]);
 
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.AUDIT, JSON.stringify(auditLogs));
-    } catch (e) {
-      console.error('Failed to save audit logs to storage', e);
-    }
+    } catch { /* ignore */ }
   }, [auditLogs]);
 
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(currentUser));
-    } catch (e) {
-      console.error('Failed to save current user to storage', e);
-    }
+    } catch { /* ignore */ }
   }, [currentUser]);
 
-  // Check and update overdue status on mount & change
-  useEffect(() => {
-    const today = new Date().toISOString().split('T')[0];
-    setBorrows((prev) =>
-      prev.map((b) => {
-        if (b.status === 'Borrowed' && b.expectedReturnDate < today) {
-          return { ...b, status: 'Overdue', updatedAt: new Date().toISOString() };
+  // Initial seeding into Firestore if remote database is empty
+  const seedFirestoreIfEmpty = useCallback(async () => {
+    try {
+      const itemsSnapshot = await getDocs(collection(db, 'inventoryItems'));
+      if (itemsSnapshot.empty) {
+        console.log('Firestore is empty. Seeding initial science lab inventory data...');
+        const batch = writeBatch(db);
+
+        // Seed items
+        for (const item of INITIAL_ITEMS) {
+          batch.set(doc(db, 'inventoryItems', item.itemId), item);
         }
-        return b;
-      })
-    );
+        // Seed borrows
+        for (const borrow of INITIAL_BORROWS) {
+          batch.set(doc(db, 'borrowRecords', borrow.borrowId), borrow);
+        }
+        // Seed maintenance
+        for (const maint of INITIAL_MAINTENANCE) {
+          batch.set(doc(db, 'maintenanceRecords', maint.maintenanceId), maint);
+        }
+        // Seed restocks
+        for (const restock of INITIAL_RESTOCKS) {
+          batch.set(doc(db, 'restockRecords', restock.restockId), restock);
+        }
+        // Seed audit logs
+        for (const log of INITIAL_AUDIT_LOGS) {
+          batch.set(doc(db, 'auditLogs', log.logId), log);
+        }
+        // Seed settings
+        batch.set(doc(db, 'settings', 'global'), {
+          categories: DEFAULT_CATEGORIES,
+          locations: DEFAULT_LOCATIONS,
+          updatedAt: new Date().toISOString(),
+        });
+
+        await batch.commit();
+        console.log('Initial science lab inventory data successfully seeded to Firestore!');
+      }
+    } catch (err) {
+      console.warn('Seeding check or write failed (may be offline or permission restricted):', err);
+    }
   }, []);
 
-  const isStaff = currentUser.role === 'admin';
+  // Test connection and setup real-time Firestore listeners
+  useEffect(() => {
+    let unsubscribeItems: (() => void) | undefined;
+    let unsubscribeBorrows: (() => void) | undefined;
+    let unsubscribeMaintenance: (() => void) | undefined;
+    let unsubscribeRestocks: (() => void) | undefined;
+    let unsubscribeAudit: (() => void) | undefined;
+    let unsubscribeSettings: (() => void) | undefined;
 
-  // Helper to add custom category
-  const addCategory = (categoryName: string) => {
-    const trimmed = categoryName.trim();
-    if (!trimmed) return;
-    setCategories((prev) => {
-      if (prev.some((c) => c.toLowerCase() === trimmed.toLowerCase())) return prev;
-      return [...prev, trimmed];
+    const initFirebaseListeners = async () => {
+      setIsSyncing(true);
+      const testResult = await testFirestoreConnection();
+      if (!testResult.connected) {
+        setIsFirebaseConnected(false);
+        setFirestoreError(testResult.error || 'Cannot connect to Firebase');
+        setIsSyncing(false);
+        return;
+      }
+      setIsFirebaseConnected(true);
+      setFirestoreError(null);
+
+      // Perform initial check / seed if database is new
+      await seedFirestoreIfEmpty();
+
+      try {
+        // 1. Items listener
+        unsubscribeItems = onSnapshot(
+          collection(db, 'inventoryItems'),
+          (snapshot) => {
+            if (!snapshot.empty) {
+              const remoteItems = snapshot.docs.map((docSnap) => docSnap.data() as InventoryItem);
+              setItems(remoteItems);
+            }
+            setIsSyncing(false);
+          },
+          (err) => {
+            const errInfo = handleFirestoreError(err, 'list', 'inventoryItems');
+            setFirestoreError(errInfo.error);
+            setIsSyncing(false);
+          }
+        );
+
+        // 2. Borrows listener
+        unsubscribeBorrows = onSnapshot(
+          collection(db, 'borrowRecords'),
+          (snapshot) => {
+            if (!snapshot.empty) {
+              const remoteBorrows = snapshot.docs.map((docSnap) => docSnap.data() as BorrowRecord);
+              const today = new Date().toISOString().split('T')[0];
+              const updated = remoteBorrows.map((b) => {
+                if (b.status === 'Borrowed' && b.expectedReturnDate < today) {
+                  return { ...b, status: 'Overdue' as const };
+                }
+                return b;
+              });
+              setBorrows(updated);
+            }
+          },
+          (err) => handleFirestoreError(err, 'list', 'borrowRecords')
+        );
+
+        // 3. Maintenance listener
+        unsubscribeMaintenance = onSnapshot(
+          collection(db, 'maintenanceRecords'),
+          (snapshot) => {
+            if (!snapshot.empty) {
+              const remoteMaint = snapshot.docs.map((docSnap) => docSnap.data() as MaintenanceRecord);
+              setMaintenance(remoteMaint);
+            }
+          },
+          (err) => handleFirestoreError(err, 'list', 'maintenanceRecords')
+        );
+
+        // 4. Restocks listener
+        unsubscribeRestocks = onSnapshot(
+          collection(db, 'restockRecords'),
+          (snapshot) => {
+            if (!snapshot.empty) {
+              const remoteRestocks = snapshot.docs.map((docSnap) => docSnap.data() as RestockRecord);
+              setRestocks(remoteRestocks);
+            }
+          },
+          (err) => handleFirestoreError(err, 'list', 'restockRecords')
+        );
+
+        // 5. Audit logs listener
+        unsubscribeAudit = onSnapshot(
+          collection(db, 'auditLogs'),
+          (snapshot) => {
+            if (!snapshot.empty) {
+              const remoteLogs = snapshot.docs.map((docSnap) => docSnap.data() as AuditLog);
+              remoteLogs.sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1));
+              setAuditLogs(remoteLogs);
+            }
+          },
+          (err) => handleFirestoreError(err, 'list', 'auditLogs')
+        );
+
+        // 6. Settings listener (Categories & Locations)
+        unsubscribeSettings = onSnapshot(
+          doc(db, 'settings', 'global'),
+          (docSnap) => {
+            if (docSnap.exists()) {
+              const data = docSnap.data();
+              if (Array.isArray(data?.categories)) {
+                setCategories(Array.from(new Set([...DEFAULT_CATEGORIES, ...data.categories])));
+              }
+              if (Array.isArray(data?.locations)) {
+                setLocations(Array.from(new Set([...DEFAULT_LOCATIONS, ...data.locations])));
+              }
+            }
+          },
+          (err) => handleFirestoreError(err, 'read', 'settings')
+        );
+      } catch (e: any) {
+        console.error('Error attaching Firebase listeners:', e);
+        setIsSyncing(false);
+      }
+    };
+
+    initFirebaseListeners();
+
+    return () => {
+      if (unsubscribeItems) unsubscribeItems();
+      if (unsubscribeBorrows) unsubscribeBorrows();
+      if (unsubscribeMaintenance) unsubscribeMaintenance();
+      if (unsubscribeRestocks) unsubscribeRestocks();
+      if (unsubscribeAudit) unsubscribeAudit();
+      if (unsubscribeSettings) unsubscribeSettings();
+    };
+  }, [seedFirestoreIfEmpty]);
+
+  // Firebase Auth state listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      if (fbUser) {
+        const email = fbUser.email?.toLowerCase().trim() || '';
+        if (email.endsWith(ALLOWED_DOMAIN)) {
+          const isAdmin = ADMIN_EMAILS.includes(email);
+          const dept =
+            email === 'menur@lazuardi.sch.id'
+              ? 'Kepala Laboratorium Science & Science Teacher'
+              : email === 'susi@lazuardi.sch.id'
+              ? 'Science Teacher & Admin Laboratorium'
+              : 'Guru / Staff Lazuardi';
+
+          const defaultName =
+            email === 'menur@lazuardi.sch.id'
+              ? 'Menurseto Mawaddah, S.Pd'
+              : email === 'susi@lazuardi.sch.id'
+              ? 'Susiyanti Wedya, S.Pd'
+              : fbUser.displayName || email.split('@')[0];
+
+          const appUser: User = {
+            userId: fbUser.uid,
+            name: fbUser.displayName || defaultName,
+            email: email,
+            role: isAdmin ? 'admin' : 'teacher',
+            department: dept,
+            photoURL: fbUser.photoURL || undefined,
+          };
+
+          setCurrentUser(appUser);
+          setIsAuthenticated(true);
+          setAuthError(null);
+          localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(appUser));
+        } else {
+          // Reject user if not @lazuardi.sch.id
+          await firebaseSignOut(auth);
+          setCurrentUser(null);
+          setIsAuthenticated(false);
+          localStorage.removeItem(STORAGE_KEYS.USER);
+          setAuthError(
+            `Akses Ditolak: Akun (${email}) bukan domain @lazuardi.sch.id. Hanya civitas sekolah yang berhak masuk.`
+          );
+        }
+      } else {
+        // Fallback: check saved session in localStorage
+        try {
+          const saved = localStorage.getItem(STORAGE_KEYS.USER);
+          if (saved) {
+            const parsed: User = JSON.parse(saved);
+            if (parsed && parsed.email?.toLowerCase().endsWith(ALLOWED_DOMAIN)) {
+              setCurrentUser(parsed);
+              setIsAuthenticated(true);
+            } else {
+              setCurrentUser(null);
+              setIsAuthenticated(false);
+            }
+          } else {
+            setCurrentUser(null);
+            setIsAuthenticated(false);
+          }
+        } catch {
+          setCurrentUser(null);
+          setIsAuthenticated(false);
+        }
+      }
+      setAuthLoading(false);
     });
+
+    return () => unsubscribe();
+  }, []);
+
+  const loginWithGoogle = async (): Promise<{ success: boolean; error?: string }> => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({
+        hd: 'lazuardi.sch.id',
+        prompt: 'select_account',
+      });
+      const result = await signInWithPopup(auth, provider);
+      const fbUser = result.user;
+      const email = fbUser.email?.toLowerCase().trim() || '';
+
+      if (!email.endsWith(ALLOWED_DOMAIN)) {
+        await firebaseSignOut(auth);
+        const errMsg = `Akses Ditolak: Akun (${email}) bukan domain resmi @lazuardi.sch.id. Hanya civitas sekolah yang berwenang mengakses inventaris lab.`;
+        setAuthError(errMsg);
+        setCurrentUser(null);
+        setIsAuthenticated(false);
+        localStorage.removeItem(STORAGE_KEYS.USER);
+        return { success: false, error: errMsg };
+      }
+
+      const isAdmin = ADMIN_EMAILS.includes(email);
+      const dept =
+        email === 'menur@lazuardi.sch.id'
+          ? 'Kepala Laboratorium Science & Science Teacher'
+          : email === 'susi@lazuardi.sch.id'
+          ? 'Science Teacher & Admin Laboratorium'
+          : 'Guru / Staff Lazuardi';
+
+      const defaultName =
+        email === 'menur@lazuardi.sch.id'
+          ? 'Menurseto Mawaddah, S.Pd'
+          : email === 'susi@lazuardi.sch.id'
+          ? 'Susiyanti Wedya, S.Pd'
+          : fbUser.displayName || email.split('@')[0];
+
+      const appUser: User = {
+        userId: fbUser.uid,
+        name: fbUser.displayName || defaultName,
+        email: email,
+        role: isAdmin ? 'admin' : 'teacher',
+        department: dept,
+        photoURL: fbUser.photoURL || undefined,
+      };
+
+      setCurrentUser(appUser);
+      setIsAuthenticated(true);
+      setAuthError(null);
+      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(appUser));
+      return { success: true };
+    } catch (err: any) {
+      console.error('Google Sign-in error:', err);
+      let msg = 'Gagal melakukan login dengan Google.';
+      if (err?.code === 'auth/popup-closed-by-user') {
+        msg = 'Proses login dibatalkan karena jendela pop-up ditutup.';
+      } else if (err?.code === 'auth/popup-blocked') {
+        msg = 'Pop-up Google terblokir oleh browser. Harap izinkan pop-up pada tab browser ini.';
+      } else if (err?.message) {
+        msg = err.message;
+      }
+      setAuthError(msg);
+      return { success: false, error: msg };
+    } finally {
+      setAuthLoading(false);
+    }
   };
 
-  // Helper to add custom location
-  const addLocation = (locationName: string) => {
-    const trimmed = locationName.trim();
-    if (!trimmed) return;
-    setLocations((prev) => {
-      if (prev.some((l) => l.toLowerCase() === trimmed.toLowerCase())) return prev;
-      return [...prev, trimmed];
-    });
+  const loginWithQuickAccount = async (targetEmail: string): Promise<{ success: boolean; error?: string }> => {
+    setAuthLoading(true);
+    setAuthError(null);
+    const email = targetEmail.toLowerCase().trim();
+
+    if (!email.endsWith(ALLOWED_DOMAIN)) {
+      const errMsg = `Akses Ditolak: Akun (${email}) tidak memiliki domain @lazuardi.sch.id. Hanya akun sekolah yang diizinkan masuk.`;
+      setAuthError(errMsg);
+      setCurrentUser(null);
+      setIsAuthenticated(false);
+      localStorage.removeItem(STORAGE_KEYS.USER);
+      setAuthLoading(false);
+      return { success: false, error: errMsg };
+    }
+
+    const isAdmin = ADMIN_EMAILS.includes(email);
+    const matched = INITIAL_USERS.find((u) => u.email.toLowerCase() === email);
+    const appUser: User = matched || {
+      userId: `usr-${email.split('@')[0]}`,
+      name:
+        email === 'menur@lazuardi.sch.id'
+          ? 'Menurseto Mawaddah, S.Pd'
+          : email === 'susi@lazuardi.sch.id'
+          ? 'Susiyanti Wedya, S.Pd'
+          : `Guru (${email.split('@')[0]})`,
+      email: email,
+      role: isAdmin ? 'admin' : 'teacher',
+      department: isAdmin ? 'Admin Laboratorium Science' : 'Guru / Peminjam Lab Lazuardi',
+    };
+
+    setCurrentUser(appUser);
+    setIsAuthenticated(true);
+    setAuthError(null);
+    localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(appUser));
+    setAuthLoading(false);
+    return { success: true };
   };
 
-  // Helper to append audit log
+  const logout = async () => {
+    try {
+      await firebaseSignOut(auth);
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
+    setCurrentUser(null);
+    setIsAuthenticated(false);
+    localStorage.removeItem(STORAGE_KEYS.USER);
+  };
+
+  const isStaff = currentUser?.role === 'admin';
+
+  // Helper to append audit log to state and Firestore
   const logAudit = (
     entityType: AuditLog['entityType'],
     action: string,
@@ -349,7 +715,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const newLog: AuditLog = {
       logId: 'log-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
       timestamp: new Date().toISOString(),
-      actorName: currentUser.name,
+      actorName: currentUser?.name || 'Sistem',
       actorRole: isStaff ? 'Admin Lab' : 'Guru / Peminjam',
       entityType,
       action,
@@ -359,7 +725,49 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       previousValue,
       newValue,
     };
+
+    // Optimistic local update
     setAuditLogs((prev) => [newLog, ...prev]);
+
+    setDoc(doc(db, 'auditLogs', newLog.logId), newLog).catch((err) => {
+      handleFirestoreError(err, 'create', 'auditLogs', newLog.logId);
+    });
+  };
+
+  // Helper to add custom category
+  const addCategory = (categoryName: string) => {
+    const trimmed = categoryName.trim();
+    if (!trimmed) return;
+    if (categories.some((c) => c.toLowerCase() === trimmed.toLowerCase())) return;
+
+    const newCategories = [...categories, trimmed];
+    setCategories(newCategories);
+
+    setDoc(
+      doc(db, 'settings', 'global'),
+      { categories: newCategories, updatedAt: new Date().toISOString() },
+      { merge: true }
+    ).catch((err) => {
+      handleFirestoreError(err, 'update', 'settings', 'global');
+    });
+  };
+
+  // Helper to add custom location
+  const addLocation = (locationName: string) => {
+    const trimmed = locationName.trim();
+    if (!trimmed) return;
+    if (locations.some((l) => l.toLowerCase() === trimmed.toLowerCase())) return;
+
+    const newLocations = [...locations, trimmed];
+    setLocations(newLocations);
+
+    setDoc(
+      doc(db, 'settings', 'global'),
+      { locations: newLocations, updatedAt: new Date().toISOString() },
+      { merge: true }
+    ).catch((err) => {
+      handleFirestoreError(err, 'update', 'settings', 'global');
+    });
   };
 
   // Stock calculation for a single item
@@ -428,7 +836,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   // 1. Add Item
-  const addItem = (itemData: Omit<InventoryItem, 'itemId' | 'createdAt' | 'updatedAt'>) => {
+  const addItem = (itemData: Omit<InventoryItem, 'itemId' | 'createdAt' | 'updatedAt'>): { success: boolean; error?: string } => {
     if (!isStaff) return { success: false, error: 'Hanya Admin/Staf Lab yang dapat menambah barang.' };
     if (!itemData.name.trim()) return { success: false, error: 'Nama barang wajib diisi.' };
     if (!itemData.itemCode.trim()) return { success: false, error: 'ID/Kode barang wajib diisi.' };
@@ -446,7 +854,6 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return { success: false, error: 'Harga pembelian tidak boleh negatif.' };
     }
 
-    // Ensure category and location are registered in dynamic lists
     if (itemData.category) addCategory(itemData.category);
     if (itemData.location) addLocation(itemData.location);
 
@@ -460,7 +867,13 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       updatedAt: now,
     };
 
+    // Optimistic local update
     setItems((prev) => [newItem, ...prev]);
+
+    // Persist to Firestore
+    setDoc(doc(db, 'inventoryItems', newItem.itemId), newItem).catch((err) => {
+      handleFirestoreError(err, 'create', 'inventoryItems', newItem.itemId);
+    });
 
     logAudit(
       'Inventory',
@@ -476,7 +889,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   // 2. Update Item
-  const updateItem = (itemId: string, updates: Partial<InventoryItem>) => {
+  const updateItem = (itemId: string, updates: Partial<InventoryItem>): { success: boolean; error?: string } => {
     if (!isStaff) return { success: false, error: 'Hanya Admin/Staf Lab yang dapat mengubah data barang.' };
 
     const existing = items.find((i) => i.itemId === itemId);
@@ -511,7 +924,13 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       updatedAt: now,
     };
 
+    // Optimistic local update
     setItems((prev) => prev.map((i) => (i.itemId === itemId ? updatedItem : i)));
+
+    // Persist to Firestore
+    updateDoc(doc(db, 'inventoryItems', itemId), updates).catch((err) => {
+      handleFirestoreError(err, 'update', 'inventoryItems', itemId);
+    });
 
     const changes = Object.keys(updates)
       .map((k) => `${k}: ${(existing as any)[k]} -> ${(updates as any)[k]}`)
@@ -531,7 +950,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   // 3. Archive / Unarchive Item
-  const archiveItem = (itemId: string) => {
+  const archiveItem = (itemId: string): { success: boolean; error?: string } => {
     if (!isStaff) return { success: false, error: 'Hanya Admin yang dapat mengarsipkan barang.' };
     const existing = items.find((i) => i.itemId === itemId);
     if (!existing) return { success: false, error: 'Barang tidak ditemukan.' };
@@ -544,11 +963,16 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       };
     }
 
+    const now = new Date().toISOString();
     setItems((prev) =>
       prev.map((i) =>
-        i.itemId === itemId ? { ...i, status: 'Archived', updatedAt: new Date().toISOString() } : i
+        i.itemId === itemId ? { ...i, status: 'Archived', updatedAt: now } : i
       )
     );
+
+    updateDoc(doc(db, 'inventoryItems', itemId), { status: 'Archived', updatedAt: now }).catch((err) => {
+      handleFirestoreError(err, 'update', 'inventoryItems', itemId);
+    });
 
     logAudit(
       'Inventory',
@@ -563,16 +987,21 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return { success: true };
   };
 
-  const unarchiveItem = (itemId: string) => {
+  const unarchiveItem = (itemId: string): { success: boolean; error?: string } => {
     if (!isStaff) return { success: false, error: 'Hanya Admin yang dapat memulihkan barang.' };
     const existing = items.find((i) => i.itemId === itemId);
     if (!existing) return { success: false, error: 'Barang tidak ditemukan.' };
 
+    const now = new Date().toISOString();
     setItems((prev) =>
       prev.map((i) =>
-        i.itemId === itemId ? { ...i, status: 'Active', updatedAt: new Date().toISOString() } : i
+        i.itemId === itemId ? { ...i, status: 'Active', updatedAt: now } : i
       )
     );
+
+    updateDoc(doc(db, 'inventoryItems', itemId), { status: 'Active', updatedAt: now }).catch((err) => {
+      handleFirestoreError(err, 'update', 'inventoryItems', itemId);
+    });
 
     logAudit(
       'Inventory',
@@ -608,7 +1037,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     expectedReturnDate: string;
     purpose: string;
     notes?: string;
-  }) => {
+  }): { success: boolean; error?: string } => {
     const item = items.find((i) => i.itemId === itemId);
     if (!item) return { success: false, error: 'Barang tidak ditemukan.' };
     if (item.status === 'Archived') return { success: false, error: 'Barang berstatus diarsipkan dan tidak dapat dipinjam.' };
@@ -644,12 +1073,16 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       purpose: purpose.trim(),
       expectedReturnDate,
       status: 'Borrowed',
-      notes: notes?.trim(),
+      notes: notes?.trim() || '',
       createdAt: now,
       updatedAt: now,
     };
 
     setBorrows((prev) => [newBorrow, ...prev]);
+
+    setDoc(doc(db, 'borrowRecords', newBorrow.borrowId), newBorrow).catch((err) => {
+      handleFirestoreError(err, 'create', 'borrowRecords', newBorrow.borrowId);
+    });
 
     logAudit(
       'Borrow',
@@ -677,7 +1110,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     returnCondition: 'Good' | 'Fair' | 'Damaged' | 'Hilang';
     notes?: string;
     damageDescriptionIfAny?: string;
-  }) => {
+  }): { success: boolean; error?: string } => {
     if (!isStaff) return { success: false, error: 'Hanya Staf Lab yang dapat memproses pengembalian barang.' };
 
     const borrow = borrows.find((b) => b.borrowId === borrowId);
@@ -690,22 +1123,24 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (!actualReturnDate) return { success: false, error: 'Tanggal pengembalian aktual wajib diisi.' };
 
     const now = new Date().toISOString();
+    const updatedNotes = notes ? (borrow.notes ? `${borrow.notes} | Pengembalian: ${notes}` : `Pengembalian: ${notes}`) : (borrow.notes || '');
 
-    // Update borrow record
+    const borrowUpdates = {
+      actualReturnDate,
+      returnCondition,
+      status: 'Returned' as const,
+      notes: updatedNotes,
+      updatedAt: now,
+    };
+
+    // Update local state
     setBorrows((prev) =>
-      prev.map((b) =>
-        b.borrowId === borrowId
-          ? {
-              ...b,
-              actualReturnDate,
-              returnCondition,
-              status: 'Returned',
-              notes: notes ? (b.notes ? `${b.notes} | Pengembalian: ${notes}` : `Pengembalian: ${notes}`) : b.notes,
-              updatedAt: now,
-            }
-          : b
-      )
+      prev.map((b) => (b.borrowId === borrowId ? { ...b, ...borrowUpdates } : b))
     );
+
+    updateDoc(doc(db, 'borrowRecords', borrowId), borrowUpdates).catch((err) => {
+      handleFirestoreError(err, 'update', 'borrowRecords', borrowId);
+    });
 
     if (returnCondition === 'Damaged') {
       const desc =
@@ -730,6 +1165,10 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       setMaintenance((prev) => [newMaint, ...prev]);
 
+      setDoc(doc(db, 'maintenanceRecords', newMaint.maintenanceId), newMaint).catch((err) => {
+        handleFirestoreError(err, 'create', 'maintenanceRecords', newMaint.maintenanceId);
+      });
+
       logAudit(
         'Borrow',
         'RETURN_DAMAGED',
@@ -740,21 +1179,25 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         `Status Pengembalian: Returned (Damaged). Maintenance ID: ${newMaint.maintenanceId}`
       );
     } else if (returnCondition === 'Hilang') {
-      // Mark item condition as Hilang
+      const itemNotes = item.notes
+        ? `${item.notes} | [Hilang saat dipinjam oleh ${borrow.borrowerName} (${actualReturnDate})]`
+        : `[Hilang saat dipinjam oleh ${borrow.borrowerName} (${actualReturnDate})]`;
+
       setItems((prev) =>
         prev.map((i) =>
           i.itemId === item.itemId
-            ? {
-                ...i,
-                condition: 'Hilang',
-                notes: i.notes
-                  ? `${i.notes} | [Hilang saat dipinjam oleh ${borrow.borrowerName} (${actualReturnDate})]`
-                  : `[Hilang saat dipinjam oleh ${borrow.borrowerName} (${actualReturnDate})]`,
-                updatedAt: now,
-              }
+            ? { ...i, condition: 'Hilang', notes: itemNotes, updatedAt: now }
             : i
         )
       );
+
+      updateDoc(doc(db, 'inventoryItems', item.itemId), {
+        condition: 'Hilang',
+        notes: itemNotes,
+        updatedAt: now,
+      }).catch((err) => {
+        handleFirestoreError(err, 'update', 'inventoryItems', item.itemId);
+      });
 
       logAudit(
         'Borrow',
@@ -766,7 +1209,6 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         `Kondisi Baru: Hilang`
       );
     } else {
-      // Good or Fair -> Stock returns to available automatically
       logAudit(
         'Borrow',
         'RETURN_GOOD',
@@ -798,7 +1240,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     pic: string;
     repairCost?: number;
     notes?: string;
-  }) => {
+  }): { success: boolean; error?: string } => {
     if (!isStaff) return { success: false, error: 'Hanya Staf Lab yang dapat mencatat maintenance.' };
 
     const item = items.find((i) => i.itemId === itemId);
@@ -830,12 +1272,16 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       reportedDate,
       pic: pic.trim(),
       repairCost,
-      notes: notes?.trim(),
+      notes: notes?.trim() || '',
       createdAt: now,
       updatedAt: now,
     };
 
     setMaintenance((prev) => [newMaint, ...prev]);
+
+    setDoc(doc(db, 'maintenanceRecords', newMaint.maintenanceId), newMaint).catch((err) => {
+      handleFirestoreError(err, 'create', 'maintenanceRecords', newMaint.maintenanceId);
+    });
 
     logAudit(
       'Maintenance',
@@ -867,7 +1313,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     notes?: string;
     resolvedCondition?: 'Good' | 'Fair';
     retireUnitsIfNotRepairable?: boolean;
-  }) => {
+  }): { success: boolean; error?: string } => {
     if (!isStaff) return { success: false, error: 'Hanya Staf Lab yang dapat mengubah status maintenance.' };
 
     const rec = maintenance.find((m) => m.maintenanceId === maintenanceId);
@@ -883,21 +1329,25 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const now = new Date().toISOString();
     const prevStatus = rec.repairStatus;
 
+    const updatedMaintData = {
+      repairStatus,
+      pic: pic !== undefined ? pic.trim() : rec.pic,
+      repairCost: repairCost !== undefined ? repairCost : rec.repairCost,
+      notes: notes !== undefined ? notes.trim() : rec.notes,
+      resolvedDate:
+        repairStatus === 'Repaired' || repairStatus === 'Not Repairable'
+          ? now.split('T')[0]
+          : rec.resolvedDate,
+      updatedAt: now,
+    };
+
     setMaintenance((prev) =>
-      prev.map((m) =>
-        m.maintenanceId === maintenanceId
-          ? {
-              ...m,
-              repairStatus,
-              pic: pic !== undefined ? pic.trim() : m.pic,
-              repairCost: repairCost !== undefined ? repairCost : m.repairCost,
-              notes: notes !== undefined ? notes.trim() : m.notes,
-              resolvedDate: repairStatus === 'Repaired' || repairStatus === 'Not Repairable' ? now.split('T')[0] : m.resolvedDate,
-              updatedAt: now,
-            }
-          : m
-      )
+      prev.map((m) => (m.maintenanceId === maintenanceId ? { ...m, ...updatedMaintData } : m))
     );
+
+    updateDoc(doc(db, 'maintenanceRecords', maintenanceId), updatedMaintData).catch((err) => {
+      handleFirestoreError(err, 'update', 'maintenanceRecords', maintenanceId);
+    });
 
     if (repairStatus === 'Repaired') {
       if (item.condition === 'Damaged' || item.condition === 'Under Maintenance' || item.condition === 'Hilang') {
@@ -906,6 +1356,13 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             i.itemId === item.itemId ? { ...i, condition: resolvedCondition, updatedAt: now } : i
           )
         );
+
+        updateDoc(doc(db, 'inventoryItems', item.itemId), {
+          condition: resolvedCondition,
+          updatedAt: now,
+        }).catch((err) => {
+          handleFirestoreError(err, 'update', 'inventoryItems', item.itemId);
+        });
       }
 
       logAudit(
@@ -925,6 +1382,13 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             i.itemId === item.itemId ? { ...i, quantity: newTotal, updatedAt: now } : i
           )
         );
+
+        updateDoc(doc(db, 'inventoryItems', item.itemId), {
+          quantity: newTotal,
+          updatedAt: now,
+        }).catch((err) => {
+          handleFirestoreError(err, 'update', 'inventoryItems', item.itemId);
+        });
 
         logAudit(
           'Maintenance',
@@ -972,7 +1436,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     recommendedQuantity: number;
     targetStock?: number;
     notes?: string;
-  }) => {
+  }): { success: boolean; error?: string } => {
     if (!isStaff) return { success: false, error: 'Hanya Staf Lab yang dapat membuat permintaan restock.' };
 
     const item = items.find((i) => i.itemId === itemId);
@@ -990,19 +1454,20 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     );
 
     if (existing) {
+      const restockUpdate = {
+        recommendedQuantity,
+        targetStock: effectiveTarget,
+        notes: notes ?? existing.notes ?? '',
+        updatedAt: now,
+      };
+
       setRestocks((prev) =>
-        prev.map((r) =>
-          r.restockId === existing.restockId
-            ? {
-                ...r,
-                recommendedQuantity,
-                targetStock: effectiveTarget,
-                notes: notes ?? r.notes,
-                updatedAt: now,
-              }
-            : r
-        )
+        prev.map((r) => (r.restockId === existing.restockId ? { ...r, ...restockUpdate } : r))
       );
+
+      updateDoc(doc(db, 'restockRecords', existing.restockId), restockUpdate).catch((err) => {
+        handleFirestoreError(err, 'update', 'restockRecords', existing.restockId);
+      });
 
       logAudit(
         'Restock',
@@ -1026,12 +1491,16 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         recommendedQuantity,
         status: 'To Buy',
         supplier: item.supplier,
-        notes: notes?.trim(),
+        notes: notes?.trim() || '',
         createdAt: now,
         updatedAt: now,
       };
 
       setRestocks((prev) => [newRestock, ...prev]);
+
+      setDoc(doc(db, 'restockRecords', newRestock.restockId), newRestock).catch((err) => {
+        handleFirestoreError(err, 'create', 'restockRecords', newRestock.restockId);
+      });
 
       logAudit(
         'Restock',
@@ -1058,7 +1527,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     supplier: string;
     orderedDate: string;
     notes?: string;
-  }) => {
+  }): { success: boolean; error?: string } => {
     if (!isStaff) return { success: false, error: 'Hanya Staf Lab yang dapat memesan restock.' };
 
     const rec = restocks.find((r) => r.restockId === restockId);
@@ -1067,20 +1536,21 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (!orderedDate) return { success: false, error: 'Tanggal pemesanan wajib diisi.' };
 
     const now = new Date().toISOString();
+    const orderUpdate = {
+      status: 'Ordered' as const,
+      supplier: supplier.trim(),
+      orderedDate,
+      notes: notes?.trim() || rec.notes || '',
+      updatedAt: now,
+    };
+
     setRestocks((prev) =>
-      prev.map((r) =>
-        r.restockId === restockId
-          ? {
-              ...r,
-              status: 'Ordered',
-              supplier: supplier.trim(),
-              orderedDate,
-              notes: notes?.trim() || r.notes,
-              updatedAt: now,
-            }
-          : r
-      )
+      prev.map((r) => (r.restockId === restockId ? { ...r, ...orderUpdate } : r))
     );
+
+    updateDoc(doc(db, 'restockRecords', restockId), orderUpdate).catch((err) => {
+      handleFirestoreError(err, 'update', 'restockRecords', restockId);
+    });
 
     logAudit(
       'Restock',
@@ -1106,7 +1576,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     receivedQuantity: number;
     receivedDate: string;
     notes?: string;
-  }) => {
+  }): { success: boolean; error?: string } => {
     if (!isStaff) return { success: false, error: 'Hanya Staf Lab yang dapat memproses penerimaan barang.' };
 
     const rec = restocks.find((r) => r.restockId === restockId);
@@ -1122,20 +1592,18 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const now = new Date().toISOString();
     const prevQuantity = item.quantity;
     const newQuantity = prevQuantity + receivedQuantity;
+    const resolvedCondition = item.condition === 'Damaged' || item.condition === 'Hilang' ? 'Good' : item.condition;
+
+    const receiveUpdate = {
+      status: 'Received' as const,
+      receivedQuantity,
+      receivedDate,
+      notes: notes?.trim() || rec.notes || '',
+      updatedAt: now,
+    };
 
     setRestocks((prev) =>
-      prev.map((r) =>
-        r.restockId === restockId
-          ? {
-              ...r,
-              status: 'Received',
-              receivedQuantity,
-              receivedDate,
-              notes: notes?.trim() || r.notes,
-              updatedAt: now,
-            }
-          : r
-      )
+      prev.map((r) => (r.restockId === restockId ? { ...r, ...receiveUpdate } : r))
     );
 
     setItems((prev) =>
@@ -1144,12 +1612,24 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           ? {
               ...i,
               quantity: newQuantity,
-              condition: i.condition === 'Damaged' || i.condition === 'Hilang' ? 'Good' : i.condition,
+              condition: resolvedCondition,
               updatedAt: now,
             }
           : i
       )
     );
+
+    updateDoc(doc(db, 'restockRecords', restockId), receiveUpdate).catch((err) => {
+      handleFirestoreError(err, 'update', 'restockRecords', restockId);
+    });
+
+    updateDoc(doc(db, 'inventoryItems', item.itemId), {
+      quantity: newQuantity,
+      condition: resolvedCondition,
+      updatedAt: now,
+    }).catch((err) => {
+      handleFirestoreError(err, 'update', 'inventoryItems', item.itemId);
+    });
 
     logAudit(
       'Restock',
@@ -1164,7 +1644,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return { success: true };
   };
 
-  // Reset to initial sample data
+  // Reset to initial sample data (local + remote Firestore)
   const resetToSampleData = () => {
     setItems(INITIAL_ITEMS);
     setCategories(DEFAULT_CATEGORIES);
@@ -1183,6 +1663,38 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.removeItem(STORAGE_KEYS.RESTOCKS);
     localStorage.removeItem(STORAGE_KEYS.AUDIT);
     localStorage.removeItem(STORAGE_KEYS.USER);
+
+    // Overwrite Firestore in a batch asynchronously
+    const doBatch = async () => {
+      try {
+        const batch = writeBatch(db);
+        for (const item of INITIAL_ITEMS) {
+          batch.set(doc(db, 'inventoryItems', item.itemId), item);
+        }
+        for (const borrow of INITIAL_BORROWS) {
+          batch.set(doc(db, 'borrowRecords', borrow.borrowId), borrow);
+        }
+        for (const maint of INITIAL_MAINTENANCE) {
+          batch.set(doc(db, 'maintenanceRecords', maint.maintenanceId), maint);
+        }
+        for (const restock of INITIAL_RESTOCKS) {
+          batch.set(doc(db, 'restockRecords', restock.restockId), restock);
+        }
+        for (const log of INITIAL_AUDIT_LOGS) {
+          batch.set(doc(db, 'auditLogs', log.logId), log);
+        }
+        batch.set(doc(db, 'settings', 'global'), {
+          categories: DEFAULT_CATEGORIES,
+          locations: DEFAULT_LOCATIONS,
+          updatedAt: new Date().toISOString(),
+        });
+        await batch.commit();
+        console.log('Reset to sample data committed to Firestore.');
+      } catch (err) {
+        console.error('Failed to commit reset to Firestore:', err);
+      }
+    };
+    doBatch();
   };
 
   // Export JSON
@@ -1270,11 +1782,21 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setCurrentUser,
         availableUsers: INITIAL_USERS,
         isStaff,
+        isAuthenticated,
+        authLoading,
+        authError,
+        setAuthError,
+        loginWithGoogle,
+        logout,
+        loginWithQuickAccount,
         items,
         categories,
         locations,
         addCategory,
         addLocation,
+        isFirebaseConnected,
+        isSyncing,
+        firestoreError,
         borrows,
         maintenance,
         restocks,

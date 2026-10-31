@@ -11,7 +11,11 @@ export interface User {
   email: string;
   role: UserRole;
   department: string;
+  photoURL?: string;
 }
+
+export const ALLOWED_DOMAIN = '@lazuardi.sch.id';
+export const ADMIN_EMAILS = ['menur@lazuardi.sch.id', 'susi@lazuardi.sch.id'];
 
 export interface InventoryItem {
   itemId: string;
