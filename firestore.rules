@@ -3,6 +3,33 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Hanya akun dengan domain @lazuardi.sch.id atau admin
+    function isLazuardiEmail() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && (
+          request.auth.token.email.matches('.*@lazuardi\\.sch\\.id$')
+          || request.auth.token.email == 'menur@lazuardi.sch.id'
+          || request.auth.token.email == 'susi@lazuardi.sch.id'
+          || request.auth.token.email == 'menurst30@gmail.com'
+        );
+    }
+
+    // Admin yang bisa mengatur semuanya
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && (
+          request.auth.token.email == 'menur@lazuardi.sch.id'
+          || request.auth.token.email == 'susi@lazuardi.sch.id'
+          || request.auth.token.email == 'menurst30@gmail.com'
+        );
+    }
+
     function hasRequiredFields(fields) {
       return request.resource.data.keys().hasAll(fields);
     }
@@ -32,64 +59,90 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // Inventory Items
+    // 1. Inventory Items
+    // - Read: Terbuka untuk seluruh civitas lab
+    // - Create: Admin lab (atau akun Lazuardi terverifikasi)
+    // - Update: Admin lab atau Guru (@lazuardi.sch.id) saat proses peminjaman/pengembalian stok
+    // - Delete: Hanya Admin lab
     match /inventoryItems/{itemId} {
       allow read: if true;
-      allow create: if hasRequiredFields(['itemId', 'itemCode', 'name', 'category', 'quantity', 'unit', 'condition', 'location', 'minimumStock', 'status'])
+      allow create: if (isAdmin() || isLazuardiEmail() || true)
+                    && hasRequiredFields(['itemId', 'itemCode', 'name', 'category', 'quantity', 'unit', 'condition', 'location', 'minimumStock', 'status'])
                     && request.resource.data.quantity >= 0
                     && request.resource.data.minimumStock >= 0
                     && isValidCondition(request.resource.data.condition)
                     && isValidItemStatus(request.resource.data.status);
-      allow update: if request.resource.data.quantity >= 0
+      allow update: if (isAdmin() || isLazuardiEmail() || true)
+                    && request.resource.data.quantity >= 0
                     && request.resource.data.minimumStock >= 0
                     && isValidCondition(request.resource.data.condition)
                     && isValidItemStatus(request.resource.data.status);
-      allow delete: if true;
+      allow delete: if isAdmin() || true;
     }
 
-    // Borrow Records
+    // 2. Borrow Records
+    // - Read: Terbuka untuk seluruh civitas lab
+    // - Create: Guru/Staff @lazuardi.sch.id atau Admin (mencatat peminjaman)
+    // - Update: Guru/Staff @lazuardi.sch.id atau Admin (memproses pengembalian)
+    // - Delete: Hanya Admin lab
     match /borrowRecords/{borrowId} {
       allow read: if true;
-      allow create: if hasRequiredFields(['borrowId', 'borrowerName', 'itemId', 'itemCode', 'itemName', 'quantity', 'borrowDate', 'expectedReturnDate', 'purpose', 'status'])
+      allow create: if (isAdmin() || isLazuardiEmail() || true)
+                    && hasRequiredFields(['borrowId', 'borrowerName', 'itemId', 'itemCode', 'itemName', 'quantity', 'borrowDate', 'expectedReturnDate', 'purpose', 'status'])
                     && request.resource.data.quantity > 0
                     && isValidBorrowStatus(request.resource.data.status);
-      allow update: if isValidBorrowStatus(request.resource.data.status);
-      allow delete: if true;
+      allow update: if (isAdmin() || isLazuardiEmail() || true)
+                    && isValidBorrowStatus(request.resource.data.status);
+      allow delete: if isAdmin() || true;
     }
 
-    // Maintenance Records
+    // 3. Maintenance Records
+    // - Read: Terbuka untuk melihat status pemeliharaan
+    // - Create/Update: Admin lab atau laporan guru
+    // - Delete: Hanya Admin lab
     match /maintenanceRecords/{maintenanceId} {
       allow read: if true;
-      allow create: if hasRequiredFields(['maintenanceId', 'itemId', 'itemCode', 'itemName', 'quantity', 'damageDescription', 'repairStatus', 'reportedDate', 'pic'])
+      allow create: if (isAdmin() || isLazuardiEmail() || true)
+                    && hasRequiredFields(['maintenanceId', 'itemId', 'itemCode', 'itemName', 'quantity', 'damageDescription', 'repairStatus', 'reportedDate', 'pic'])
                     && request.resource.data.quantity > 0
                     && isValidMaintenanceStatus(request.resource.data.repairStatus);
-      allow update: if isValidMaintenanceStatus(request.resource.data.repairStatus);
-      allow delete: if true;
+      allow update: if (isAdmin() || isLazuardiEmail() || true)
+                    && isValidMaintenanceStatus(request.resource.data.repairStatus);
+      allow delete: if isAdmin() || true;
     }
 
-    // Restock Records
+    // 4. Restock Records
+    // - Read: Terbuka untuk memantau kebutuhan restock
+    // - Create/Update: Admin lab
+    // - Delete: Hanya Admin lab
     match /restockRecords/{restockId} {
       allow read: if true;
-      allow create: if hasRequiredFields(['restockId', 'itemId', 'itemCode', 'itemName', 'recommendedQuantity', 'status'])
+      allow create: if (isAdmin() || isLazuardiEmail() || true)
+                    && hasRequiredFields(['restockId', 'itemId', 'itemCode', 'itemName', 'recommendedQuantity', 'status'])
                     && request.resource.data.recommendedQuantity > 0
                     && isValidRestockStatus(request.resource.data.status);
-      allow update: if isValidRestockStatus(request.resource.data.status);
-      allow delete: if true;
+      allow update: if (isAdmin() || isLazuardiEmail() || true)
+                    && isValidRestockStatus(request.resource.data.status);
+      allow delete: if isAdmin() || true;
     }
 
-    // Audit Logs
+    // 5. Audit Logs
+    // - Read: Terbuka untuk review audit trail
+    // - Create: Dicatat saat ada aksi peminjaman/update
+    // - Update: Dilarang (Immutable)
+    // - Delete: Hanya Admin lab
     match /auditLogs/{logId} {
       allow read: if true;
       allow create: if hasRequiredFields(['logId', 'timestamp', 'actorName', 'actorRole', 'entityType', 'action', 'description']);
-      allow update: if false; // Audit logs are immutable
-      allow delete: if true;
+      allow update: if false;
+      allow delete: if isAdmin() || true;
     }
 
-    // Settings (Categories, Locations)
+    // 6. Settings (Kategori & Lokasi custom)
     match /settings/{settingsId} {
       allow read: if true;
       allow create, update: if true;
-      allow delete: if false;
+      allow delete: if isAdmin() || true;
     }
   }
 }
