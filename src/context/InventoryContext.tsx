@@ -17,6 +17,11 @@ import {
   INITIAL_USERS,
   DEFAULT_CATEGORIES,
   DEFAULT_LOCATIONS,
+  DUMMY_ITEM_IDS,
+  DUMMY_BORROW_IDS,
+  DUMMY_MAINTENANCE_IDS,
+  DUMMY_RESTOCK_IDS,
+  DUMMY_AUDIT_LOG_IDS,
 } from '../data/initialData';
 import {
   db,
@@ -36,6 +41,8 @@ import {
   doc,
   setDoc,
   updateDoc,
+  deleteDoc,
+  getDoc,
   onSnapshot,
   getDocs,
   writeBatch,
@@ -147,7 +154,8 @@ interface InventoryContextType {
   }) => { success: boolean; error?: string };
 
   // Utility
-  resetToSampleData: () => void;
+  purgeDummyData: () => Promise<void>;
+  resetToSampleData: () => Promise<void>;
   exportDataJSON: () => void;
   exportInventoryCSV: () => void;
 }
@@ -203,15 +211,20 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Items
+  // Items: start empty or load genuine non-dummy items from cache
   const [items, setItems] = useState<InventoryItem[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.ITEMS);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed: InventoryItem[] = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((item) => !DUMMY_ITEM_IDS.includes(item.itemId));
+        }
+      }
     } catch {
       // fallback
     }
-    return INITIAL_ITEMS;
+    return [];
   });
 
   // Custom Categories
@@ -242,48 +255,68 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return DEFAULT_LOCATIONS;
   });
 
-  // Borrows
+  // Borrows: start empty or load genuine non-dummy borrows from cache
   const [borrows, setBorrows] = useState<BorrowRecord[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.BORROWS);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed: BorrowRecord[] = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((b) => !DUMMY_BORROW_IDS.includes(b.borrowId));
+        }
+      }
     } catch {
       // fallback
     }
-    return INITIAL_BORROWS;
+    return [];
   });
 
-  // Maintenance
+  // Maintenance: start empty or load genuine non-dummy records from cache
   const [maintenance, setMaintenance] = useState<MaintenanceRecord[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.MAINTENANCE);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed: MaintenanceRecord[] = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((m) => !DUMMY_MAINTENANCE_IDS.includes(m.maintenanceId));
+        }
+      }
     } catch {
       // fallback
     }
-    return INITIAL_MAINTENANCE;
+    return [];
   });
 
-  // Restocks
+  // Restocks: start empty or load genuine non-dummy restocks from cache
   const [restocks, setRestocks] = useState<RestockRecord[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.RESTOCKS);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed: RestockRecord[] = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((r) => !DUMMY_RESTOCK_IDS.includes(r.restockId));
+        }
+      }
     } catch {
       // fallback
     }
-    return INITIAL_RESTOCKS;
+    return [];
   });
 
-  // Audit Logs
+  // Audit Logs: start empty or load genuine non-dummy logs from cache
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.AUDIT);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed: AuditLog[] = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((l) => !DUMMY_AUDIT_LOG_IDS.includes(l.logId));
+        }
+      }
     } catch {
       // fallback
     }
-    return INITIAL_AUDIT_LOGS;
+    return [];
   });
 
   // Local storage caching for offline resilience
@@ -335,46 +368,42 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     } catch { /* ignore */ }
   }, [currentUser]);
 
-  // Initial seeding into Firestore if remote database is empty
-  const seedFirestoreIfEmpty = useCallback(async () => {
+  // Clean up any residual dummy/mock documents from Firestore and ensure initial settings
+  const cleanupFirestoreDummyData = useCallback(async () => {
     try {
-      const itemsSnapshot = await getDocs(collection(db, 'inventoryItems'));
-      if (itemsSnapshot.empty) {
-        console.log('Firestore is empty. Seeding initial science lab inventory data...');
-        const batch = writeBatch(db);
+      // 1. Delete known dummy records from Firestore if they were previously seeded
+      const deletePromises: Promise<any>[] = [];
 
-        // Seed items
-        for (const item of INITIAL_ITEMS) {
-          batch.set(doc(db, 'inventoryItems', item.itemId), item);
-        }
-        // Seed borrows
-        for (const borrow of INITIAL_BORROWS) {
-          batch.set(doc(db, 'borrowRecords', borrow.borrowId), borrow);
-        }
-        // Seed maintenance
-        for (const maint of INITIAL_MAINTENANCE) {
-          batch.set(doc(db, 'maintenanceRecords', maint.maintenanceId), maint);
-        }
-        // Seed restocks
-        for (const restock of INITIAL_RESTOCKS) {
-          batch.set(doc(db, 'restockRecords', restock.restockId), restock);
-        }
-        // Seed audit logs
-        for (const log of INITIAL_AUDIT_LOGS) {
-          batch.set(doc(db, 'auditLogs', log.logId), log);
-        }
-        // Seed settings
-        batch.set(doc(db, 'settings', 'global'), {
+      for (const id of DUMMY_ITEM_IDS) {
+        deletePromises.push(deleteDoc(doc(db, 'inventoryItems', id)).catch(() => {}));
+      }
+      for (const id of DUMMY_BORROW_IDS) {
+        deletePromises.push(deleteDoc(doc(db, 'borrowRecords', id)).catch(() => {}));
+      }
+      for (const id of DUMMY_MAINTENANCE_IDS) {
+        deletePromises.push(deleteDoc(doc(db, 'maintenanceRecords', id)).catch(() => {}));
+      }
+      for (const id of DUMMY_RESTOCK_IDS) {
+        deletePromises.push(deleteDoc(doc(db, 'restockRecords', id)).catch(() => {}));
+      }
+      for (const id of DUMMY_AUDIT_LOG_IDS) {
+        deletePromises.push(deleteDoc(doc(db, 'auditLogs', id)).catch(() => {}));
+      }
+
+      await Promise.allSettled(deletePromises);
+
+      // 2. Ensure settings/global exists with standard default categories and locations
+      const settingsRef = doc(db, 'settings', 'global');
+      const settingsSnap = await getDoc(settingsRef).catch(() => null);
+      if (settingsSnap && !settingsSnap.exists()) {
+        await setDoc(settingsRef, {
           categories: DEFAULT_CATEGORIES,
           locations: DEFAULT_LOCATIONS,
           updatedAt: new Date().toISOString(),
-        });
-
-        await batch.commit();
-        console.log('Initial science lab inventory data successfully seeded to Firestore!');
+        }).catch(() => {});
       }
     } catch (err) {
-      console.warn('Seeding check or write failed (may be offline or permission restricted):', err);
+      console.warn('Firestore dummy cleanup check failed:', err);
     }
   }, []);
 
@@ -399,18 +428,18 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setIsFirebaseConnected(true);
       setFirestoreError(null);
 
-      // Perform initial check / seed if database is new
-      await seedFirestoreIfEmpty();
+      // Clean up any residual dummy records from Firestore
+      await cleanupFirestoreDummyData();
 
       try {
-        // 1. Items listener
+        // 1. Items listener: load only real items from Firestore
         unsubscribeItems = onSnapshot(
           collection(db, 'inventoryItems'),
           (snapshot) => {
-            if (!snapshot.empty) {
-              const remoteItems = snapshot.docs.map((docSnap) => docSnap.data() as InventoryItem);
-              setItems(remoteItems);
-            }
+            const remoteItems = snapshot.docs
+              .map((docSnap) => docSnap.data() as InventoryItem)
+              .filter((item) => !DUMMY_ITEM_IDS.includes(item.itemId));
+            setItems(remoteItems);
             setIsSyncing(false);
           },
           (err) => {
@@ -420,58 +449,58 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           }
         );
 
-        // 2. Borrows listener
+        // 2. Borrows listener: load only real borrows from Firestore
         unsubscribeBorrows = onSnapshot(
           collection(db, 'borrowRecords'),
           (snapshot) => {
-            if (!snapshot.empty) {
-              const remoteBorrows = snapshot.docs.map((docSnap) => docSnap.data() as BorrowRecord);
-              const today = new Date().toISOString().split('T')[0];
-              const updated = remoteBorrows.map((b) => {
-                if (b.status === 'Borrowed' && b.expectedReturnDate < today) {
-                  return { ...b, status: 'Overdue' as const };
-                }
-                return b;
-              });
-              setBorrows(updated);
-            }
+            const remoteBorrows = snapshot.docs
+              .map((docSnap) => docSnap.data() as BorrowRecord)
+              .filter((b) => !DUMMY_BORROW_IDS.includes(b.borrowId));
+            const today = new Date().toISOString().split('T')[0];
+            const updated = remoteBorrows.map((b) => {
+              if (b.status === 'Borrowed' && b.expectedReturnDate < today) {
+                return { ...b, status: 'Overdue' as const };
+              }
+              return b;
+            });
+            setBorrows(updated);
           },
           (err) => handleFirestoreError(err, 'list', 'borrowRecords')
         );
 
-        // 3. Maintenance listener
+        // 3. Maintenance listener: load only real maintenance from Firestore
         unsubscribeMaintenance = onSnapshot(
           collection(db, 'maintenanceRecords'),
           (snapshot) => {
-            if (!snapshot.empty) {
-              const remoteMaint = snapshot.docs.map((docSnap) => docSnap.data() as MaintenanceRecord);
-              setMaintenance(remoteMaint);
-            }
+            const remoteMaint = snapshot.docs
+              .map((docSnap) => docSnap.data() as MaintenanceRecord)
+              .filter((m) => !DUMMY_MAINTENANCE_IDS.includes(m.maintenanceId));
+            setMaintenance(remoteMaint);
           },
           (err) => handleFirestoreError(err, 'list', 'maintenanceRecords')
         );
 
-        // 4. Restocks listener
+        // 4. Restocks listener: load only real restocks from Firestore
         unsubscribeRestocks = onSnapshot(
           collection(db, 'restockRecords'),
           (snapshot) => {
-            if (!snapshot.empty) {
-              const remoteRestocks = snapshot.docs.map((docSnap) => docSnap.data() as RestockRecord);
-              setRestocks(remoteRestocks);
-            }
+            const remoteRestocks = snapshot.docs
+              .map((docSnap) => docSnap.data() as RestockRecord)
+              .filter((r) => !DUMMY_RESTOCK_IDS.includes(r.restockId));
+            setRestocks(remoteRestocks);
           },
           (err) => handleFirestoreError(err, 'list', 'restockRecords')
         );
 
-        // 5. Audit logs listener
+        // 5. Audit logs listener: load only real audit logs from Firestore
         unsubscribeAudit = onSnapshot(
           collection(db, 'auditLogs'),
           (snapshot) => {
-            if (!snapshot.empty) {
-              const remoteLogs = snapshot.docs.map((docSnap) => docSnap.data() as AuditLog);
-              remoteLogs.sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1));
-              setAuditLogs(remoteLogs);
-            }
+            const remoteLogs = snapshot.docs
+              .map((docSnap) => docSnap.data() as AuditLog)
+              .filter((l) => !DUMMY_AUDIT_LOG_IDS.includes(l.logId));
+            remoteLogs.sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1));
+            setAuditLogs(remoteLogs);
           },
           (err) => handleFirestoreError(err, 'list', 'auditLogs')
         );
@@ -508,7 +537,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (unsubscribeAudit) unsubscribeAudit();
       if (unsubscribeSettings) unsubscribeSettings();
     };
-  }, [seedFirestoreIfEmpty]);
+  }, [cleanupFirestoreDummyData]);
 
   // Firebase Auth state listener
   useEffect(() => {
@@ -1644,58 +1673,32 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return { success: true };
   };
 
-  // Reset to initial sample data (local + remote Firestore)
-  const resetToSampleData = () => {
-    setItems(INITIAL_ITEMS);
-    setCategories(DEFAULT_CATEGORIES);
-    setLocations(DEFAULT_LOCATIONS);
-    setBorrows(INITIAL_BORROWS);
-    setMaintenance(INITIAL_MAINTENANCE);
-    setRestocks(INITIAL_RESTOCKS);
-    setAuditLogs(INITIAL_AUDIT_LOGS);
-    setCurrentUser(INITIAL_USERS[0]);
+  // Purge all dummy data from memory, localStorage, and Firestore (retaining only genuine user data)
+  const purgeDummyData = async (): Promise<void> => {
+    // 1. Immediately filter out dummy items from state
+    setItems((prev) => prev.filter((i) => !DUMMY_ITEM_IDS.includes(i.itemId)));
+    setBorrows((prev) => prev.filter((b) => !DUMMY_BORROW_IDS.includes(b.borrowId)));
+    setMaintenance((prev) => prev.filter((m) => !DUMMY_MAINTENANCE_IDS.includes(m.maintenanceId)));
+    setRestocks((prev) => prev.filter((r) => !DUMMY_RESTOCK_IDS.includes(r.restockId)));
+    setAuditLogs((prev) => prev.filter((l) => !DUMMY_AUDIT_LOG_IDS.includes(l.logId)));
 
-    localStorage.removeItem(STORAGE_KEYS.ITEMS);
-    localStorage.removeItem(STORAGE_KEYS.CATEGORIES);
-    localStorage.removeItem(STORAGE_KEYS.LOCATIONS);
-    localStorage.removeItem(STORAGE_KEYS.BORROWS);
-    localStorage.removeItem(STORAGE_KEYS.MAINTENANCE);
-    localStorage.removeItem(STORAGE_KEYS.RESTOCKS);
-    localStorage.removeItem(STORAGE_KEYS.AUDIT);
-    localStorage.removeItem(STORAGE_KEYS.USER);
+    // 2. Clear localStorage dummy caches
+    try {
+      localStorage.removeItem(STORAGE_KEYS.ITEMS);
+      localStorage.removeItem(STORAGE_KEYS.BORROWS);
+      localStorage.removeItem(STORAGE_KEYS.MAINTENANCE);
+      localStorage.removeItem(STORAGE_KEYS.RESTOCKS);
+      localStorage.removeItem(STORAGE_KEYS.AUDIT);
+    } catch {
+      // ignore
+    }
 
-    // Overwrite Firestore in a batch asynchronously
-    const doBatch = async () => {
-      try {
-        const batch = writeBatch(db);
-        for (const item of INITIAL_ITEMS) {
-          batch.set(doc(db, 'inventoryItems', item.itemId), item);
-        }
-        for (const borrow of INITIAL_BORROWS) {
-          batch.set(doc(db, 'borrowRecords', borrow.borrowId), borrow);
-        }
-        for (const maint of INITIAL_MAINTENANCE) {
-          batch.set(doc(db, 'maintenanceRecords', maint.maintenanceId), maint);
-        }
-        for (const restock of INITIAL_RESTOCKS) {
-          batch.set(doc(db, 'restockRecords', restock.restockId), restock);
-        }
-        for (const log of INITIAL_AUDIT_LOGS) {
-          batch.set(doc(db, 'auditLogs', log.logId), log);
-        }
-        batch.set(doc(db, 'settings', 'global'), {
-          categories: DEFAULT_CATEGORIES,
-          locations: DEFAULT_LOCATIONS,
-          updatedAt: new Date().toISOString(),
-        });
-        await batch.commit();
-        console.log('Reset to sample data committed to Firestore.');
-      } catch (err) {
-        console.error('Failed to commit reset to Firestore:', err);
-      }
-    };
-    doBatch();
+    // 3. Purge dummy documents directly from Firestore
+    await cleanupFirestoreDummyData();
+    console.log('Semua data dummy telah dibersihkan. Hanya data Firestore tersimpan.');
   };
+
+  const resetToSampleData = purgeDummyData;
 
   // Export JSON
   const exportDataJSON = () => {
@@ -1813,6 +1816,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         createOrUpdateRestock,
         orderRestock,
         receiveRestock,
+        purgeDummyData,
         resetToSampleData,
         exportDataJSON,
         exportInventoryCSV,

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useInventory } from '../../context/InventoryContext';
+import { useTheme } from '../../context/ThemeContext';
 import {
   FlaskConical,
   ShieldCheck,
@@ -12,7 +13,11 @@ import {
   CloudOff,
   RefreshCw,
   LogOut,
-  Mail,
+  Sun,
+  Moon,
+  History,
+  Check,
+  Sparkles,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -27,7 +32,7 @@ export const Header: React.FC<HeaderProps> = ({ onShowAudit, showAudit }) => {
     availableUsers,
     isStaff,
     logout,
-    resetToSampleData,
+    purgeDummyData,
     exportDataJSON,
     exportInventoryCSV,
     isFirebaseConnected,
@@ -35,130 +40,155 @@ export const Header: React.FC<HeaderProps> = ({ onShowAudit, showAudit }) => {
     firestoreError,
   } = useInventory();
 
+  const { theme, toggleTheme } = useTheme();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [isPurging, setIsPurging] = useState(false);
 
-  const handleReset = () => {
-    resetToSampleData();
-    setShowResetConfirm(false);
+  const handleReset = async () => {
+    setIsPurging(true);
+    try {
+      await purgeDummyData();
+    } finally {
+      setIsPurging(false);
+      setShowResetConfirm(false);
+    }
   };
 
   return (
-    <header className="bg-slate-900 border-b border-slate-800 text-white sticky top-0 z-40">
+    <header className="bg-white/90 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 sticky top-0 z-40 backdrop-blur-md transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
-          {/* Logo & Title */}
+        <div className="flex items-center justify-between h-15">
+          {/* Left: Brand Identity */}
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-900/30">
-              <FlaskConical className="w-5 h-5 text-white" />
+            <div className="w-8 h-8 rounded-lg bg-blue-600 dark:bg-blue-500 text-white flex items-center justify-center shadow-xs">
+              <FlaskConical className="w-4 h-4" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-lg tracking-tight text-white">Science Lab Inventory</span>
-                <span className="text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800/80">
-                  SMART LAB
-                </span>
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-sm sm:text-base tracking-tight text-slate-900 dark:text-white">
+                Science Lab Inventory
+              </span>
+              <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200/80 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800/80">
+                Lazuardi
+              </span>
+              
+              {/* Cloud Sync Status */}
+              <div className="hidden lg:flex items-center ml-2">
                 {isSyncing ? (
-                  <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-amber-400 bg-amber-950/60 border border-amber-800/60 px-2 py-0.5 rounded-full">
-                    <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                    <span>Sinkronisasi Cloud...</span>
+                  <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    <span>Sinkronisasi...</span>
                   </span>
                 ) : isFirebaseConnected ? (
-                  <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-full" title="Terkoneksi ke Firebase Firestore">
-                    <Cloud className="w-2.5 h-2.5 text-emerald-400" />
-                    <span>Firebase Aktif</span>
+                  <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400" title="Terkoneksi ke Firebase Firestore">
+                    <Cloud className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    <span>Cloud Aktif</span>
                   </span>
                 ) : (
-                  <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-rose-400 bg-rose-950/60 border border-rose-800/60 px-2 py-0.5 rounded-full" title={firestoreError || 'Firebase offline'}>
-                    <CloudOff className="w-2.5 h-2.5 text-rose-400" />
-                    <span>Mode Offline</span>
+                  <span className="inline-flex items-center gap-1.5 text-[11px] text-rose-500 dark:text-rose-400" title={firestoreError || 'Firebase offline'}>
+                    <CloudOff className="w-3.5 h-3.5" />
+                    <span>Offline</span>
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-400 hidden sm:block">
-                Manajemen Inventaris Alat & Bahan Laboratorium Sains Sekolah
-              </p>
             </div>
           </div>
 
-          {/* Right Controls: Role Switcher & Utilities */}
-          <div className="flex items-center gap-3">
+          {/* Right: Quick Tools, Theme Toggle, Audit Log, User Profile */}
+          <div className="flex items-center gap-2">
             {/* Quick Export Tools */}
-            <div className="hidden md:flex items-center gap-1.5 bg-slate-800/80 p-1 rounded-lg border border-slate-700/60">
+            <div className="hidden sm:flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-lg border border-slate-200 dark:border-slate-700/80">
               <button
                 onClick={exportInventoryCSV}
                 title="Ekspor Inventaris ke CSV"
-                className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-slate-300 hover:text-white hover:bg-slate-700 rounded transition-colors"
+                className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white rounded-md transition-colors cursor-pointer"
               >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                <FileSpreadsheet className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                 <span>CSV</span>
               </button>
               <button
                 onClick={exportDataJSON}
                 title="Backup Lengkap Database JSON"
-                className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-slate-300 hover:text-white hover:bg-slate-700 rounded transition-colors"
+                className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white rounded-md transition-colors cursor-pointer"
               >
-                <Download className="w-3.5 h-3.5 text-cyan-400" />
+                <Download className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                 <span>Backup</span>
               </button>
-              <button
-                onClick={() => setShowResetConfirm(true)}
-                title="Reset ke Data Sampel Default"
-                className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-slate-400 hover:text-amber-300 hover:bg-slate-700 rounded transition-colors"
-              >
-                <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
-                <span>Reset</span>
-              </button>
+              {isStaff && (
+                <button
+                  onClick={() => setShowResetConfirm(true)}
+                  title="Bersihkan Semua Data Dummy dari Firestore"
+                  className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded-md transition-colors cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Bersihkan Dummy</span>
+                </button>
+              )}
             </div>
 
-            {/* Audit Log Quick Toggle */}
+            {/* Audit Log Button */}
             <button
               onClick={onShowAudit}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 ${
+              title="Lihat Riwayat Aktivitas & Audit Trail"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
                 showAudit
-                  ? 'bg-emerald-600 text-white border-emerald-500'
-                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white'
+                  ? 'bg-blue-600 text-white border-blue-600 dark:bg-blue-500 dark:border-blue-500'
+                  : 'bg-white dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750'
               }`}
             >
-              <span>Riwayat Aktivitas</span>
+              <History className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Riwayat Aktivitas</span>
+            </button>
+
+            {/* Theme Toggle Button (Light/Dark with Sun/Moon) */}
+            <button
+              onClick={toggleTheme}
+              aria-label="Toggle tema gelap atau terang"
+              title={theme === 'dark' ? 'Ganti ke Mode Terang (Light Mode)' : 'Ganti ke Mode Gelap (Dark Mode)'}
+              className="p-2 rounded-lg text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white bg-slate-100 hover:bg-slate-200/80 dark:bg-slate-800/80 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer"
+            >
+              {theme === 'dark' ? (
+                <Sun className="w-4 h-4 text-amber-400" />
+              ) : (
+                <Moon className="w-4 h-4 text-blue-600" />
+              )}
             </button>
 
             {/* User Profile & Role Switcher */}
             <div className="relative">
               <button
                 onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-2.5 bg-slate-800 hover:bg-slate-750 px-3 py-1.5 rounded-xl border border-slate-700 text-left transition-colors"
+                className="flex items-center gap-2 pl-2 pr-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer text-left"
               >
                 {currentUser?.photoURL ? (
                   <img
                     src={currentUser.photoURL}
                     alt={currentUser.name}
-                    className="w-7 h-7 rounded-lg object-cover border border-slate-600"
+                    className="w-6 h-6 rounded-md object-cover border border-slate-300 dark:border-slate-600"
                   />
                 ) : (
                   <div
-                    className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold ${
-                      isStaff ? 'bg-emerald-600 text-white' : 'bg-sky-600 text-white'
+                    className={`w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold ${
+                      isStaff
+                        ? 'bg-blue-600 text-white dark:bg-blue-500'
+                        : 'bg-slate-700 text-white dark:bg-slate-600'
                     }`}
                   >
-                    {isStaff ? <ShieldCheck className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+                    {isStaff ? <ShieldCheck className="w-3.5 h-3.5" /> : <UserCheck className="w-3.5 h-3.5" />}
                   </div>
                 )}
-                <div className="hidden sm:block">
-                  <div className="text-xs font-semibold text-white leading-tight flex items-center gap-1.5">
-                    {currentUser?.name || 'Pengguna'}
+                <div className="hidden sm:block text-left">
+                  <div className="text-xs font-medium text-slate-900 dark:text-white leading-tight flex items-center gap-1.5">
+                    <span className="truncate max-w-[120px]">{currentUser?.name?.split(' ')[0] || 'Pengguna'}</span>
                     <span
-                      className={`text-[9px] font-bold uppercase px-1.5 py-0.2 rounded ${
+                      className={`text-[9px] font-semibold uppercase px-1.5 py-0.2 rounded ${
                         isStaff
-                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                          : 'bg-sky-950 text-sky-300 border border-sky-800'
+                          ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/70 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
+                          : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
                       }`}
                     >
-                      {isStaff ? 'Admin Lab (Full)' : 'Guru (Borrow Only)'}
+                      {isStaff ? 'Admin' : 'Guru'}
                     </span>
-                  </div>
-                  <div className="text-[11px] text-slate-400 font-mono truncate max-w-[180px]">
-                    {currentUser?.email}
                   </div>
                 </div>
                 <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
@@ -168,33 +198,30 @@ export const Header: React.FC<HeaderProps> = ({ onShowAudit, showAudit }) => {
               {showUserMenu && (
                 <>
                   <div className="fixed inset-0 z-20" onClick={() => setShowUserMenu(false)} />
-                  <div className="absolute right-0 mt-2 w-80 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl py-2 z-30 divide-y divide-slate-700/60">
+                  <div className="absolute right-0 mt-2 w-76 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl py-1.5 z-30 divide-y divide-slate-100 dark:divide-slate-800 text-xs">
                     {/* Active Profile Info */}
-                    <div className="px-4 py-3">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                        Akun Terautentikasi
-                      </p>
-                      <div className="font-semibold text-sm text-white">{currentUser?.name}</div>
-                      <div className="text-xs text-slate-300 font-mono mt-0.5">{currentUser?.email}</div>
+                    <div className="px-3.5 py-2.5">
+                      <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1">
+                        Akun Terverifikasi
+                      </div>
+                      <div className="font-semibold text-slate-900 dark:text-white">{currentUser?.name}</div>
+                      <div className="text-slate-500 dark:text-slate-400 font-mono text-[11px] mt-0.5 truncate">{currentUser?.email}</div>
                       <div className="text-[11px] text-slate-400 mt-1">{currentUser?.department}</div>
-                      <div className="mt-2.5">
+                      
+                      <div className="mt-2 p-2 rounded-md bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-300">
                         {isStaff ? (
-                          <div className="text-[11px] text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2.5 py-1.5 rounded-lg">
-                            ✓ <strong>Hak Akses Administrator:</strong> Akses penuh kelola inventaris, maintenance, restock, peminjaman, & audit trail.
-                          </div>
+                          <span>Akses Administrator: Pengelolaan penuh data inventaris, perawatan, dan restock.</span>
                         ) : (
-                          <div className="text-[11px] text-sky-300 bg-sky-950/80 border border-sky-800/80 px-2.5 py-1.5 rounded-lg">
-                            ℹ <strong>Hak Akses Guru (@lazuardi.sch.id):</strong> Dapat mengisi transaksi Borrow & Return; modul lain adalah <em>View-Only</em>.
-                          </div>
+                          <span>Akses Guru: Hak pengisian transaksi peminjaman & pengembalian lab.</span>
                         )}
                       </div>
                     </div>
 
                     {/* Quick Account Switcher (Testing) */}
-                    <div className="py-2 px-2">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 mb-1.5">
-                        Uji Coba Ganti Profil (Preview)
-                      </p>
+                    <div className="py-1.5 px-1.5">
+                      <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-2 py-1">
+                        Ganti Akun Demo
+                      </div>
                       {availableUsers.map((user) => (
                         <button
                           key={user.userId}
@@ -202,38 +229,34 @@ export const Header: React.FC<HeaderProps> = ({ onShowAudit, showAudit }) => {
                             setCurrentUser(user);
                             setShowUserMenu(false);
                           }}
-                          className={`w-full text-left px-2.5 py-2 rounded-lg text-xs flex items-center justify-between hover:bg-slate-700/70 transition-colors ${
-                            currentUser?.email === user.email ? 'bg-slate-700/50 text-emerald-400 font-semibold' : 'text-slate-200'
+                          className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
+                            currentUser?.email === user.email
+                              ? 'bg-blue-50/70 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 font-medium'
+                              : 'text-slate-700 dark:text-slate-300'
                           }`}
                         >
                           <div>
-                            <div className="font-medium text-white">{user.name}</div>
+                            <div className="text-slate-900 dark:text-slate-100 font-medium">{user.name}</div>
                             <div className="text-[10px] text-slate-400 font-mono">{user.email}</div>
                           </div>
-                          <span
-                            className={`text-[9px] px-2 py-0.5 rounded font-bold uppercase ${
-                              user.role === 'admin'
-                                ? 'bg-emerald-900/60 text-emerald-300 border border-emerald-800'
-                                : 'bg-sky-900/60 text-sky-300 border border-sky-800'
-                            }`}
-                          >
-                            {user.role === 'admin' ? 'Admin' : 'Guru'}
-                          </span>
+                          {currentUser?.email === user.email && (
+                            <Check className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                          )}
                         </button>
                       ))}
                     </div>
 
                     {/* Logout Button */}
-                    <div className="p-2">
+                    <div className="p-1.5">
                       <button
                         onClick={() => {
                           setShowUserMenu(false);
                           logout();
                         }}
-                        className="w-full text-left px-3 py-2 text-xs font-semibold text-rose-400 hover:text-white hover:bg-rose-950/70 rounded-lg flex items-center gap-2 transition-colors"
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40 font-medium flex items-center gap-2 transition-colors cursor-pointer"
                       >
-                        <LogOut className="w-4 h-4 text-rose-400" />
-                        <span>Keluar / Logout Akun Google</span>
+                        <LogOut className="w-3.5 h-3.5" />
+                        <span>Keluar Akun Google</span>
                       </button>
                     </div>
                   </div>
@@ -244,30 +267,35 @@ export const Header: React.FC<HeaderProps> = ({ onShowAudit, showAudit }) => {
         </div>
       </div>
 
-      {/* Reset Confirmation Modal */}
+      {/* Purge Dummy Data Confirmation Modal */}
       {showResetConfirm && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl">
-            <div className="flex items-center gap-3 text-amber-400 mb-3">
-              <RotateCcw className="w-6 h-6" />
-              <h3 className="font-bold text-lg text-white">Reset ke Data Sampel?</h3>
+        <div className="fixed inset-0 bg-slate-900/40 dark:bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-blue-600 dark:text-blue-400 mb-3">
+              <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <h3 className="font-semibold text-base text-slate-900 dark:text-white">Bersihkan Data Dummy?</h3>
             </div>
-            <p className="text-sm text-slate-300 leading-relaxed mb-6">
-              Tindakan ini akan mengembalikan seluruh database inventaris, peminjaman, maintenance, dan restock ke
-              data laboratorium sains awal sekolah. Perubahan kustom Anda akan ditimpa.
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-6">
+              Tindakan ini akan menghapus semua sisa data dummy/sampel di Firestore dan aplikasi, sehingga
+              hanya menyisakan data asli inventaris laboratorium sains yang tersimpan di Firebase.
             </p>
-            <div className="flex items-center justify-end gap-3">
+            <div className="flex items-center justify-end gap-2.5">
               <button
+                disabled={isPurging}
                 onClick={() => setShowResetConfirm(false)}
-                className="px-4 py-2 rounded-xl text-sm font-medium text-slate-300 hover:bg-slate-800 transition-colors"
+                className="px-3.5 py-2 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50"
               >
                 Batal
               </button>
               <button
+                disabled={isPurging}
                 onClick={handleReset}
-                className="px-4 py-2 rounded-xl text-sm font-medium bg-amber-600 hover:bg-amber-500 text-white transition-colors"
+                className="px-3.5 py-2 rounded-lg text-xs font-medium bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white transition-colors cursor-pointer shadow-xs disabled:opacity-50 flex items-center gap-1.5"
               >
-                Ya, Reset Sekarang
+                {isPurging && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                <span>{isPurging ? 'Membersihkan...' : 'Ya, Bersihkan Data Dummy'}</span>
               </button>
             </div>
           </div>

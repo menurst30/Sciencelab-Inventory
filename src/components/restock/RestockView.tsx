@@ -11,10 +11,8 @@ import {
   Truck,
   Plus,
   ArrowRight,
-  Info,
   X,
-  Building,
-  AlertCircle,
+  AlertTriangle,
 } from 'lucide-react';
 
 export const RestockView: React.FC = () => {
@@ -68,7 +66,6 @@ export const RestockView: React.FC = () => {
   const combinedRestockList = useMemo(() => {
     const list: Array<RestockRecord & { isAutoDetected?: boolean }> = [...restocks];
 
-    // Check low stock items that have NO active restock record
     lowStockItems.forEach((lowItem) => {
       const hasActiveRecord = restocks.some(
         (r) => r.itemId === lowItem.itemId && (r.status === 'To Buy' || r.status === 'Ordered')
@@ -119,7 +116,6 @@ export const RestockView: React.FC = () => {
         return true;
       })
       .sort((a, b) => {
-        // Pending statuses first (To Buy, Ordered, Received)
         const order: Record<RestockStatus, number> = { 'To Buy': 1, 'Ordered': 2, 'Received': 3 };
         return order[a.status] - order[b.status];
       });
@@ -173,7 +169,6 @@ export const RestockView: React.FC = () => {
   };
 
   const handleOpenOrder = (record: RestockRecord & { isAutoDetected?: boolean }) => {
-    // If it was auto detected, ensure it exists in real state first
     if (record.isAutoDetected) {
       createOrUpdateRestock({
         itemId: record.itemId,
@@ -197,7 +192,6 @@ export const RestockView: React.FC = () => {
     if (!orderModalRestock) return;
     setErrorMessage(null);
 
-    // If record was auto detected, grab real restock ID from state
     let targetRestockId = orderModalRestock.restockId;
     if (targetRestockId.startsWith('auto-rst-')) {
       const real = restocks.find((r) => r.itemId === orderModalRestock.itemId);
@@ -242,261 +236,211 @@ export const RestockView: React.FC = () => {
     });
 
     if (!res.success) {
-      setErrorMessage(res.error || 'Gagal memproses penerimaan barang.');
+      setErrorMessage(res.error || 'Gagal menerima barang.');
       return;
     }
 
     setReceiveModalRestock(null);
   };
 
+  const renderStatus = (status: RestockStatus) => {
+    switch (status) {
+      case 'To Buy':
+        return (
+          <span className="text-amber-700 dark:text-amber-400 font-medium text-xs flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+            Rencana Beli
+          </span>
+        );
+      case 'Ordered':
+        return (
+          <span className="text-blue-700 dark:text-blue-400 font-medium text-xs flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+            Dipesan
+          </span>
+        );
+      case 'Received':
+        return (
+          <span className="text-emerald-700 dark:text-emerald-400 font-medium text-xs flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            Diterima
+          </span>
+        );
+      default:
+        return <span>{status}</span>;
+    }
+  };
+
   return (
-    <div className="space-y-5">
-      {/* Top Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+    <div className="space-y-4">
+      {/* Header Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
         <div>
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
-            <span>🛒 Pengadaan & Restock Laboratorium</span>
-            {toBuyCount > 0 && (
-              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 flex items-center gap-1">
-                <TrendingDown className="w-3.5 h-3.5" />
-                {toBuyCount} Perlu Dibeli Segera
-              </span>
-            )}
+          <h1 className="text-xl font-semibold text-slate-900 dark:text-white tracking-tight">
+            Restock & Pengadaan
           </h1>
-          <p className="text-xs text-slate-400 mt-1">
-            Monitoring otomatis barang dengan stok ≤ minimum stock, rekomendasi jumlah pembelian, pemesanan, dan
-            penerimaan barang.
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            Manajemen pengadaan bahan habis pakai dan restock peralatan di bawah batas minimum.
           </p>
         </div>
 
         {isStaff && (
           <button
             onClick={handleOpenAddPlan}
-            className="px-4 py-2.5 bg-orange-600 hover:bg-orange-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-orange-900/30 flex items-center gap-2 transition-all shrink-0"
+            className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white rounded-lg text-xs font-medium transition-colors cursor-pointer shadow-xs flex items-center gap-1.5 self-start sm:self-auto"
           >
-            <Plus className="w-4 h-4" />
-            <span>Tambah Rencana Restock</span>
+            <Plus className="w-3.5 h-3.5" />
+            <span>Rencana Restock Baru</span>
           </button>
         )}
       </div>
 
-      {/* Metric Pipeline Cards */}
+      {/* 3 Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div
-          onClick={() => setSelectedStatusTab('To Buy')}
-          className={`p-4 rounded-xl border cursor-pointer transition-all ${
-            selectedStatusTab === 'To Buy'
-              ? 'bg-amber-950/40 border-amber-600 ring-1 ring-amber-500'
-              : 'bg-slate-900 border-slate-800 hover:border-slate-700'
-          }`}
-        >
-          <div className="flex items-center justify-between text-amber-400 mb-1">
-            <span className="text-xs font-bold uppercase tracking-wider">1. To Buy (Perlu Dibeli)</span>
-            <TrendingDown className="w-4 h-4" />
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-2xs">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
+            <span className="text-[10px] uppercase font-semibold">Rencana Beli</span>
+            <ShoppingCart className="w-3.5 h-3.5 text-amber-500" />
           </div>
-          <div className="text-2xl font-bold text-white tracking-tight">{toBuyCount} Item</div>
-          <p className="text-[11px] text-slate-400 mt-1">
-            Stok menipis atau di bawah batas minimum
-          </p>
+          <div className="text-xl font-bold text-slate-900 dark:text-white font-mono tabular-nums">
+            {toBuyCount}
+          </div>
+          <div className="text-[10px] text-slate-400 mt-0.5">Item perlu dipesan</div>
         </div>
 
-        <div
-          onClick={() => setSelectedStatusTab('Ordered')}
-          className={`p-4 rounded-xl border cursor-pointer transition-all ${
-            selectedStatusTab === 'Ordered'
-              ? 'bg-sky-950/40 border-sky-600 ring-1 ring-sky-500'
-              : 'bg-slate-900 border-slate-800 hover:border-slate-700'
-          }`}
-        >
-          <div className="flex items-center justify-between text-sky-400 mb-1">
-            <span className="text-xs font-bold uppercase tracking-wider">2. Ordered (Dipesan)</span>
-            <Truck className="w-4 h-4" />
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-2xs">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
+            <span className="text-[10px] uppercase font-semibold">Dalam Pesanan</span>
+            <Truck className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
           </div>
-          <div className="text-2xl font-bold text-white tracking-tight">{orderedCount} Pesanan</div>
-          <p className="text-[11px] text-slate-400 mt-1">
-            Pesanan telah dikirim ke supplier / menunggu kiriman
-          </p>
+          <div className="text-xl font-bold text-slate-900 dark:text-white font-mono tabular-nums">
+            {orderedCount}
+          </div>
+          <div className="text-[10px] text-slate-400 mt-0.5">Menunggu pengiriman supplier</div>
         </div>
 
-        <div
-          onClick={() => setSelectedStatusTab('Received')}
-          className={`p-4 rounded-xl border cursor-pointer transition-all ${
-            selectedStatusTab === 'Received'
-              ? 'bg-emerald-950/40 border-emerald-600 ring-1 ring-emerald-500'
-              : 'bg-slate-900 border-slate-800 hover:border-slate-700'
-          }`}
-        >
-          <div className="flex items-center justify-between text-emerald-400 mb-1">
-            <span className="text-xs font-bold uppercase tracking-wider">3. Received (Diterima)</span>
-            <CheckCircle2 className="w-4 h-4" />
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-2xs">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
+            <span className="text-[10px] uppercase font-semibold">Selesai Diterima</span>
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
           </div>
-          <div className="text-2xl font-bold text-white tracking-tight">{receivedCount} Selesai</div>
-          <p className="text-[11px] text-slate-400 mt-1">
-            Barang telah sampai fisik dan stok otomatis bertambah
-          </p>
+          <div className="text-xl font-bold text-slate-900 dark:text-white font-mono tabular-nums">
+            {receivedCount}
+          </div>
+          <div className="text-[10px] text-slate-400 mt-0.5">Stok fisik telah bertambah</div>
         </div>
       </div>
 
-      {/* Filter and Search Bar */}
-      <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex flex-col sm:flex-row gap-3 items-center justify-between">
-        <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
-          {(['ALL', 'To Buy', 'Ordered', 'Received'] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setSelectedStatusTab(tab)}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
-                selectedStatusTab === tab
-                  ? 'bg-orange-600 text-white shadow-xs'
-                  : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
-              }`}
-            >
-              {tab === 'ALL' ? 'Semua Pipeline' : tab}
-            </button>
-          ))}
-        </div>
+      {/* Filter and Tabs */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-2xs space-y-2.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
+            {(['ALL', 'To Buy', 'Ordered', 'Received'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setSelectedStatusTab(tab)}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                  selectedStatusTab === tab
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-2xs font-semibold'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                {tab === 'ALL'
+                  ? 'Semua'
+                  : tab === 'To Buy'
+                  ? 'Rencana Beli'
+                  : tab === 'Ordered'
+                  ? 'Dipesan'
+                  : 'Diterima'}
+              </button>
+            ))}
+          </div>
 
-        <div className="relative w-full sm:max-w-xs">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Cari nama barang atau supplier..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-hidden focus:border-orange-500"
-          />
+          <div className="relative w-full sm:w-64">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Cari item restock..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg pl-7.5 pr-3 py-1 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:border-blue-500"
+            />
+          </div>
         </div>
       </div>
 
-      {/* Restock Table */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+      {/* Main Table */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-2xs">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-300">
-            <thead className="bg-slate-950/70 border-b border-slate-800 text-[11px] uppercase font-bold text-slate-400 tracking-wider">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50/80 dark:bg-slate-950/60 border-b border-slate-200 dark:border-slate-800 text-[10px] uppercase font-semibold text-slate-500 dark:text-slate-400 tracking-wider">
               <tr>
-                <th className="px-4 py-3.5">Barang</th>
-                <th className="px-3 py-3.5">Kategori</th>
-                <th className="px-3 py-3.5">Current Stock</th>
-                <th className="px-3 py-3.5">Minimum Stock</th>
-                <th className="px-3 py-3.5">Recommended Qty</th>
-                <th className="px-3 py-3.5">Status Restock</th>
-                <th className="px-3 py-3.5">Supplier & Info</th>
-                <th className="px-4 py-3.5 text-right">Aksi</th>
+                <th className="px-3.5 py-2.5">Item & Kode</th>
+                <th className="px-3 py-2.5 text-right">Stok Saat Ini</th>
+                <th className="px-3 py-2.5 text-right">Batas Min</th>
+                <th className="px-3 py-2.5 text-right">Rekomendasi Beli</th>
+                <th className="px-3 py-2.5">Supplier</th>
+                <th className="px-3 py-2.5">Status</th>
+                <th className="px-3.5 py-2.5 text-right">Aksi</th>
               </tr>
             </thead>
 
-            <tbody className="divide-y divide-slate-800/70">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
               {filteredRestocks.map((record) => (
-                <tr key={record.restockId} className="hover:bg-slate-850/50 transition-colors">
-                  {/* Item */}
-                  <td className="px-4 py-3.5">
-                    <span className="font-mono text-[11px] font-bold text-emerald-400 block">
-                      {record.itemCode}
-                    </span>
-                    <span className="font-semibold text-white">{record.itemName}</span>
-                    {record.isAutoDetected && (
-                      <span className="inline-block mt-0.5 text-[9px] font-bold text-amber-400 bg-amber-950 px-1.5 py-0.2 rounded border border-amber-800">
-                        Deteksi Otomatis (Low Stock)
-                      </span>
-                    )}
+                <tr
+                  key={record.restockId}
+                  className="hover:bg-slate-50/70 dark:hover:bg-slate-850/40 transition-colors"
+                >
+                  <td className="px-3.5 py-2.5">
+                    <div className="font-medium text-slate-900 dark:text-white">
+                      {record.itemName}
+                    </div>
+                    <div className="text-[10px] font-mono text-slate-400">{record.itemCode}</div>
                   </td>
 
-                  {/* Category */}
-                  <td className="px-3 py-3.5">
-                    <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-slate-800 text-slate-300 border border-slate-700">
-                      {record.category}
-                    </span>
+                  <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-900 dark:text-white font-medium">
+                    {record.currentStock}
                   </td>
 
-                  {/* Current Stock */}
-                  <td className="px-3 py-3.5">
-                    <span
-                      className={`font-bold text-sm ${
-                        record.currentStock <= record.minimumStock ? 'text-amber-400' : 'text-slate-200'
-                      }`}
-                    >
-                      {record.currentStock} Unit
-                    </span>
+                  <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-500">
+                    {record.minimumStock}
                   </td>
 
-                  {/* Minimum Stock */}
-                  <td className="px-3 py-3.5 text-slate-400 font-mono">
-                    {record.minimumStock} Unit
+                  <td className="px-3 py-2.5 text-right font-mono tabular-nums text-blue-600 dark:text-blue-400 font-semibold">
+                    +{record.recommendedQuantity}
                   </td>
 
-                  {/* Recommended Quantity */}
-                  <td className="px-3 py-3.5">
-                    <span className="font-bold text-emerald-400 text-sm">
-                      +{record.recommendedQuantity} Unit
-                    </span>
-                    <span className="text-[10px] text-slate-500 block">
-                      Target: {record.targetStock}
-                    </span>
+                  <td className="px-3 py-2.5 text-slate-600 dark:text-slate-400">
+                    {record.supplier || '-'}
                   </td>
 
-                  {/* Status */}
-                  <td className="px-3 py-3.5">
-                    {record.status === 'To Buy' && (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-950 text-amber-300 border border-amber-800">
-                        <TrendingDown className="w-3 h-3" /> To Buy (Perlu Dibeli)
-                      </span>
-                    )}
-                    {record.status === 'Ordered' && (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-950 text-sky-300 border border-sky-800">
-                        <Truck className="w-3 h-3" /> Ordered (Dipesan)
-                      </span>
-                    )}
-                    {record.status === 'Received' && (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">
-                        <CheckCircle2 className="w-3 h-3" /> Received ({record.receivedQuantity} Diterima)
-                      </span>
-                    )}
+                  <td className="px-3 py-2.5">
+                    {renderStatus(record.status)}
                   </td>
 
-                  {/* Supplier & Dates */}
-                  <td className="px-3 py-3.5 text-slate-400">
-                    <div className="font-medium text-slate-300">{record.supplier || '-'}</div>
-                    {record.orderedDate && (
-                      <div className="text-[10px] text-sky-400">Order: {record.orderedDate}</div>
-                    )}
-                    {record.receivedDate && (
-                      <div className="text-[10px] text-emerald-400">
-                        Tiba: {record.receivedDate}
-                      </div>
-                    )}
-                  </td>
-
-                  {/* Action Buttons */}
-                  <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                  <td className="px-3.5 py-2.5 text-right whitespace-nowrap">
                     {isStaff ? (
-                      <div className="flex items-center justify-end gap-1.5">
-                        {record.status === 'To Buy' && (
-                          <button
-                            onClick={() => handleOpenOrder(record)}
-                            className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-all"
-                          >
-                            <Truck className="w-3.5 h-3.5" />
-                            <span>Buat Pesanan</span>
-                          </button>
-                        )}
-
-                        {record.status === 'Ordered' && (
-                          <button
-                            onClick={() => handleOpenReceive(record)}
-                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-all"
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>Terima Barang</span>
-                          </button>
-                        )}
-
-                        {record.status === 'Received' && (
-                          <span className="text-[11px] text-emerald-500 flex items-center justify-end gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Selesai
-                          </span>
-                        )}
-                      </div>
+                      record.status === 'To Buy' ? (
+                        <button
+                          onClick={() => handleOpenOrder(record)}
+                          className="px-2.5 py-1 text-xs font-medium rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/60 transition-colors cursor-pointer"
+                        >
+                          Pesan
+                        </button>
+                      ) : record.status === 'Ordered' ? (
+                        <button
+                          onClick={() => handleOpenReceive(record)}
+                          className="px-2.5 py-1 text-xs font-medium rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-900/60 transition-colors cursor-pointer"
+                        >
+                          Terima Barang
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-slate-400 font-mono">
+                          Diterima ({record.receivedQuantity || record.recommendedQuantity})
+                        </span>
+                      )
                     ) : (
-                      <span className="text-slate-500 text-[11px]">Akses Baca</span>
+                      <span className="text-[11px] text-slate-400">View only</span>
                     )}
                   </td>
                 </tr>
@@ -504,11 +448,10 @@ export const RestockView: React.FC = () => {
 
               {filteredRestocks.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-slate-400">
-                    <CheckCircle2 className="w-10 h-10 mx-auto text-emerald-500 mb-2" />
-                    <p className="font-semibold text-slate-300">Semua kebutuhan restock terpenuhi.</p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Tidak ada barang di bawah stok minimum yang membutuhkan pembelian.
+                  <td colSpan={7} className="px-4 py-12 text-center text-slate-400 dark:text-slate-500">
+                    <ShoppingCart className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-600 mb-2" />
+                    <p className="font-medium text-slate-700 dark:text-slate-300 text-xs">
+                      Tidak ada catatan restock yang sesuai filter.
                     </p>
                   </td>
                 </tr>
@@ -518,39 +461,40 @@ export const RestockView: React.FC = () => {
         </div>
       </div>
 
-      {/* Modal: Tambah Rencana Restock */}
+      {/* Add Plan Modal */}
       {isAddPlanModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl my-6">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
-              <h3 className="font-bold text-lg text-white">Tambah Rencana Restock Pengadaan</h3>
+        <div className="fixed inset-0 bg-slate-900/40 dark:bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-4">
+              <h3 className="font-semibold text-base text-slate-900 dark:text-white">
+                Buat Rencana Restock
+              </h3>
               <button
                 onClick={() => setIsAddPlanModalOpen(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-md cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
             {errorMessage && (
-              <div className="mb-4 p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-300 text-xs font-semibold">
-                ⚠️ {errorMessage}
+              <div className="mb-4 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 dark:bg-rose-950/60 dark:border-rose-900/60 dark:text-rose-200 text-xs">
+                {errorMessage}
               </div>
             )}
 
-            <form onSubmit={handleSubmitAddPlan} className="space-y-4">
-              {/* Item Selection */}
+            <form onSubmit={handleSubmitAddPlan} className="space-y-3.5 text-xs">
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">
-                  Pilih Barang yang Akan Direstock <span className="text-rose-400">*</span>
+                <label className="font-medium text-slate-700 dark:text-slate-300 block mb-1">
+                  Pilih Alat / Bahan <span className="text-rose-500">*</span>
                 </label>
                 <select
                   required
                   value={addPlanForm.itemId}
                   onChange={(e) => {
                     const sel = items.find((i) => i.itemId === e.target.value);
-                    const target = sel?.targetStock || (sel ? sel.minimumStock * 2 : 10);
-                    const cur = sel?.quantity || 0;
+                    const target = sel ? sel.targetStock || sel.minimumStock * 2 : 10;
+                    const cur = sel ? sel.quantity : 0;
                     setAddPlanForm({
                       ...addPlanForm,
                       itemId: e.target.value,
@@ -558,86 +502,71 @@ export const RestockView: React.FC = () => {
                       targetStock: String(target),
                     });
                   }}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-orange-500"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-blue-500"
                 >
-                  <option value="" disabled>
-                    -- Pilih barang --
-                  </option>
-                  {items.map((item) => (
-                    <option key={item.itemId} value={item.itemId}>
-                      {item.itemCode} - {item.name} (Stok Saat Ini: {item.quantity} {item.unit}, Min:{' '}
-                      {item.minimumStock})
+                  <option value="" disabled>-- Pilih item inventaris --</option>
+                  {items.map((i) => (
+                    <option key={i.itemId} value={i.itemId}>
+                      {i.name} ({i.itemCode}) — Stok: {i.quantity} (Min: {i.minimumStock})
                     </option>
                   ))}
                 </select>
               </div>
 
-              {/* Recommended Quantity & Target Stock */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">
-                    Jumlah Rekomendasi Beli <span className="text-rose-400">*</span>
+                  <label className="font-medium text-slate-700 dark:text-slate-300 block mb-1">
+                    Jumlah Beli <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="number"
                     min="1"
                     required
                     value={addPlanForm.recommendedQuantity}
-                    onChange={(e) =>
-                      setAddPlanForm({
-                        ...addPlanForm,
-                        recommendedQuantity: parseInt(e.target.value, 10) || 1,
-                      })
-                    }
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-orange-500"
+                    onChange={(e) => setAddPlanForm({ ...addPlanForm, recommendedQuantity: parseInt(e.target.value, 10) || 1 })}
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white font-mono focus:outline-hidden focus:border-blue-500"
                   />
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    Dihitung dari Target Stock − Current Stock
-                  </p>
                 </div>
 
                 <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">
-                    Target Stock Ideal
+                  <label className="font-medium text-slate-700 dark:text-slate-300 block mb-1">
+                    Target Stok Ideal
                   </label>
                   <input
                     type="number"
                     min="1"
                     value={addPlanForm.targetStock}
                     onChange={(e) => setAddPlanForm({ ...addPlanForm, targetStock: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-orange-500"
+                    placeholder="Batas ideal"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white font-mono focus:outline-hidden focus:border-blue-500"
                   />
-                  <p className="text-[10px] text-slate-400 mt-1">Batas stok aman maksimum laboratorium</p>
                 </div>
               </div>
 
-              {/* Notes */}
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">
-                  Catatan Rencana Pengadaan
-                </label>
+                <label className="font-medium text-slate-700 dark:text-slate-300 block mb-1">Catatan</label>
                 <textarea
                   rows={2}
                   value={addPlanForm.notes}
                   onChange={(e) => setAddPlanForm({ ...addPlanForm, notes: e.target.value })}
-                  placeholder="Kebutuhan ujian akhir semester, praktikum akreditasi..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-orange-500"
+                  placeholder="Keterangan keperluan praktikum..."
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-blue-500"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setIsAddPlanModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 rounded-xl transition-colors"
+                  className="px-3.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-semibold bg-orange-600 hover:bg-orange-500 text-white rounded-xl shadow-lg shadow-orange-900/30 transition-all"
+                  className="px-4 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white rounded-lg cursor-pointer shadow-xs"
                 >
-                  Simpan Rencana Restock
+                  Simpan Rencana
                 </button>
               </div>
             </form>
@@ -645,102 +574,85 @@ export const RestockView: React.FC = () => {
         </div>
       )}
 
-      {/* Modal: Buat Pesanan (Order) */}
+      {/* Order Modal */}
       {orderModalRestock && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl my-6">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
-              <h3 className="font-bold text-lg text-white">Buat Pesanan Pembelian (Order Restock)</h3>
+        <div className="fixed inset-0 bg-slate-900/40 dark:bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-4">
+              <div>
+                <h3 className="font-semibold text-base text-slate-900 dark:text-white">
+                  Buat Pesanan Restock
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  {orderModalRestock.itemName} (+{orderModalRestock.recommendedQuantity} unit)
+                </p>
+              </div>
               <button
                 onClick={() => setOrderModalRestock(null)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-md cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
             {errorMessage && (
-              <div className="mb-4 p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-300 text-xs font-semibold">
-                ⚠️ {errorMessage}
+              <div className="mb-4 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 dark:bg-rose-950/60 dark:border-rose-900/60 dark:text-rose-200 text-xs">
+                {errorMessage}
               </div>
             )}
 
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-1 mb-4 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400">Barang:</span>
-                <span className="font-semibold text-white">
-                  {orderModalRestock.itemCode} - {orderModalRestock.itemName}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400">Jumlah Direkomendasikan:</span>
-                <span className="font-bold text-orange-400 text-sm">
-                  {orderModalRestock.recommendedQuantity} Unit
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400">Stok Saat Ini:</span>
-                <span className="text-slate-300">{orderModalRestock.currentStock} Unit</span>
-              </div>
-            </div>
-
-            <form onSubmit={handleSubmitOrder} className="space-y-4">
-              {/* Supplier */}
+            <form onSubmit={handleSubmitOrder} className="space-y-3.5 text-xs">
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">
-                  Nama Supplier / Distributor <span className="text-rose-400">*</span>
+                <label className="font-medium text-slate-700 dark:text-slate-300 block mb-1">
+                  Nama Supplier / Vendor <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
                   value={orderForm.supplier}
                   onChange={(e) => setOrderForm({ ...orderForm, supplier: e.target.value })}
-                  placeholder="Contoh: PT Sumber Kimia Tama"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-orange-500"
+                  placeholder="Contoh: PT Sumber Sains Mandiri"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-blue-500"
                 />
               </div>
 
-              {/* Order Date */}
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">
-                  Tanggal Pemesanan (Order Date) <span className="text-rose-400">*</span>
+                <label className="font-medium text-slate-700 dark:text-slate-300 block mb-1">
+                  Tanggal Pemesanan
                 </label>
                 <input
                   type="date"
                   required
                   value={orderForm.orderedDate}
                   onChange={(e) => setOrderForm({ ...orderForm, orderedDate: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-orange-500"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-blue-500"
                 />
               </div>
 
-              {/* Notes */}
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">
-                  Nomor PO / Catatan Pemesanan
-                </label>
-                <input
-                  type="text"
+                <label className="font-medium text-slate-700 dark:text-slate-300 block mb-1">Catatan</label>
+                <textarea
+                  rows={2}
                   value={orderForm.notes}
                   onChange={(e) => setOrderForm({ ...orderForm, notes: e.target.value })}
-                  placeholder="Contoh: PO-LAB-2026/10/01 - Estimasi tiba Jumat"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-orange-500"
+                  placeholder="Nomor PO / info kontak sales..."
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-blue-500"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setOrderModalRestock(null)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 rounded-xl transition-colors"
+                  className="px-3.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-semibold bg-orange-600 hover:bg-orange-500 text-white rounded-xl shadow-lg shadow-orange-900/30 transition-all"
+                  className="px-4 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white rounded-lg cursor-pointer shadow-xs"
                 >
-                  Konfirmasi Pemesanan (Status: Ordered)
+                  Konfirmasi Pemesanan
                 </button>
               </div>
             </form>
@@ -748,108 +660,88 @@ export const RestockView: React.FC = () => {
         </div>
       )}
 
-      {/* Modal: Terima Barang (Receive) */}
+      {/* Receive Modal */}
       {receiveModalRestock && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl my-6">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
-              <h3 className="font-bold text-lg text-white">Proses Penerimaan Barang Fisik (Received)</h3>
+        <div className="fixed inset-0 bg-slate-900/40 dark:bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-4">
+              <div>
+                <h3 className="font-semibold text-base text-slate-900 dark:text-white">
+                  Penerimaan Barang Fisik
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  {receiveModalRestock.itemName} dari {receiveModalRestock.supplier || 'Supplier'}
+                </p>
+              </div>
               <button
                 onClick={() => setReceiveModalRestock(null)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-md cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
             {errorMessage && (
-              <div className="mb-4 p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-300 text-xs font-semibold">
-                ⚠️ {errorMessage}
+              <div className="mb-4 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 dark:bg-rose-950/60 dark:border-rose-900/60 dark:text-rose-200 text-xs">
+                {errorMessage}
               </div>
             )}
 
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-1 mb-4 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400">Barang:</span>
-                <span className="font-semibold text-white">
-                  {receiveModalRestock.itemCode} - {receiveModalRestock.itemName}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400">Supplier:</span>
-                <span className="font-semibold text-slate-300">{receiveModalRestock.supplier || '-'}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400">Jumlah Pesanan:</span>
-                <span className="font-bold text-sky-400">{receiveModalRestock.recommendedQuantity} Unit</span>
-              </div>
-            </div>
-
-            <form onSubmit={handleSubmitReceive} className="space-y-4">
-              {/* Actual Received Quantity */}
+            <form onSubmit={handleSubmitReceive} className="space-y-3.5 text-xs">
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">
-                  Jumlah Barang Fisik yang Benar-benar Diterima <span className="text-rose-400">*</span>
+                <label className="font-medium text-slate-700 dark:text-slate-300 block mb-1">
+                  Jumlah Fisik Diterima <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="number"
                   min="1"
                   required
                   value={receiveForm.receivedQuantity}
-                  onChange={(e) =>
-                    setReceiveForm({
-                      ...receiveForm,
-                      receivedQuantity: parseInt(e.target.value, 10) || 1,
-                    })
-                  }
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-emerald-500 font-bold"
+                  onChange={(e) => setReceiveForm({ ...receiveForm, receivedQuantity: parseInt(e.target.value, 10) || 1 })}
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white font-mono focus:outline-hidden focus:border-blue-500"
                 />
-                <p className="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
-                  <Info className="w-3.5 h-3.5" />
-                  Stok inventaris akan bertambah sebanyak <strong>+{receiveForm.receivedQuantity} unit</strong>{' '}
-                  sesuai jumlah fisik yang diterima.
-                </p>
+                <span className="text-[11px] text-slate-400 mt-0.5 block">
+                  Stok inventaris barang ini akan bertambah secara otomatis sejumlah ini.
+                </span>
               </div>
 
-              {/* Received Date */}
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">
-                  Tanggal Penerimaan <span className="text-rose-400">*</span>
+                <label className="font-medium text-slate-700 dark:text-slate-300 block mb-1">
+                  Tanggal Diterima Fisik
                 </label>
                 <input
                   type="date"
                   required
                   value={receiveForm.receivedDate}
                   onChange={(e) => setReceiveForm({ ...receiveForm, receivedDate: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-emerald-500"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-blue-500"
                 />
               </div>
 
-              {/* Notes */}
               <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">Catatan Penerimaan</label>
-                <input
-                  type="text"
+                <label className="font-medium text-slate-700 dark:text-slate-300 block mb-1">Catatan Penerimaan</label>
+                <textarea
+                  rows={2}
                   value={receiveForm.notes}
                   onChange={(e) => setReceiveForm({ ...receiveForm, notes: e.target.value })}
-                  placeholder="Kondisi kemasan utuh, segel baik, telah diuji fungsi..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-hidden focus:border-emerald-500"
+                  placeholder="Kondisi kemasan / nomor resi..."
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-blue-500"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setReceiveModalRestock(null)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 rounded-xl transition-colors"
+                  className="px-3.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-900/30 transition-all"
+                  className="px-4 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer shadow-xs"
                 >
-                  Konfirmasi Penerimaan & Tambah Stok
+                  Simpan & Tambah ke Stok
                 </button>
               </div>
             </form>

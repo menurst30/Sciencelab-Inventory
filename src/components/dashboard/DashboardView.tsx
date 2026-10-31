@@ -15,7 +15,8 @@ import {
   Clock,
   Layers,
   ChevronRight,
-  Info,
+  ShoppingBag,
+  ArrowLeftRight,
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -26,19 +27,19 @@ interface DashboardViewProps {
 export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onSelectItemDetail }) => {
   const { items, borrows, maintenance, restocks, getItemStockInfo } = useInventory();
 
-  // Active items only
+  // Active items
   const activeItems = useMemo(() => items.filter((i) => i.status === 'Active'), [items]);
 
-  // 1. Total Jenis Barang
+  // Total Jenis Barang
   const totalJenisBarang = activeItems.length;
 
-  // 2. Total Quantity
+  // Total Quantity
   const totalQuantity = useMemo(
     () => activeItems.reduce((acc, curr) => acc + curr.quantity, 0),
     [activeItems]
   );
 
-  // 3. Available Quantity (Total sum of available stock across active items)
+  // Available Quantity
   const totalAvailable = useMemo(() => {
     return activeItems.reduce((acc, item) => {
       const stock = getItemStockInfo(item.itemId);
@@ -46,14 +47,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onSele
     }, 0);
   }, [activeItems, getItemStockInfo]);
 
-  // 4. Low Stock items count (item.quantity <= item.minimumStock)
+  // Low Stock items
   const lowStockItems = useMemo(
     () => activeItems.filter((item) => item.quantity <= item.minimumStock),
     [activeItems]
   );
   const lowStockCount = lowStockItems.length;
 
-  // 5. Damaged count
+  // Damaged count
   const damagedCount = useMemo(() => {
     return activeItems.reduce((acc, item) => {
       const stock = getItemStockInfo(item.itemId);
@@ -61,7 +62,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onSele
     }, 0);
   }, [activeItems, getItemStockInfo]);
 
-  // 5b. Lost count (Hilang)
+  // Lost count (Hilang)
   const lostCount = useMemo(() => {
     return activeItems.reduce((acc, item) => {
       const stock = getItemStockInfo(item.itemId);
@@ -69,7 +70,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onSele
     }, 0);
   }, [activeItems, getItemStockInfo]);
 
-  // 6. Borrowed count
+  // Borrowed count
   const totalBorrowed = useMemo(() => {
     const activeBorrows = borrows.filter(
       (b) => b.status === 'Borrowed' || b.status === 'Overdue'
@@ -77,7 +78,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onSele
     return activeBorrows.reduce((acc, curr) => acc + curr.quantity, 0);
   }, [borrows]);
 
-  // 7. Estimated Inventory Value
+  // Maintenance active count
+  const activeMaintenanceCount = useMemo(() => {
+    return maintenance.filter(
+      (m) => m.repairStatus === 'Reported' || m.repairStatus === 'In Repair'
+    ).reduce((acc, curr) => acc + curr.quantity, 0);
+  }, [maintenance]);
+
+  // Estimated Value
   const { totalEstimatedValue, itemsWithPriceCount, totalItemsCount } = useMemo(() => {
     let sum = 0;
     let pricedCount = 0;
@@ -94,7 +102,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onSele
     };
   }, [activeItems]);
 
-  // Categories distribution from actual inventory data
+  // Categories distribution
   const categoryStats = useMemo(() => {
     const map: Record<string, { count: number; totalQty: number }> = {};
     activeItems.forEach((item) => {
@@ -116,7 +124,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onSele
     return categories.sort((a, b) => b.totalQty - a.totalQty);
   }, [activeItems, totalQuantity]);
 
-  // Needs Attention items computed dynamically from actual state
+  // Upcoming Return Deadlines (within 7 days or overdue)
+  const upcomingDeadlines = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    return borrows
+      .filter((b) => b.status === 'Borrowed' || b.status === 'Overdue')
+      .sort((a, b) => a.expectedReturnDate.localeCompare(b.expectedReturnDate))
+      .slice(0, 5);
+  }, [borrows]);
+
+  // Needs Attention items computed dynamically
   const needsAttentionList = useMemo(() => {
     const list: Array<{
       id: string;
@@ -131,40 +148,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onSele
 
     const today = new Date().toISOString().split('T')[0];
 
-    // 1. Overdue borrowings (Urgent!)
+    // 1. Overdue borrowings
     borrows
-      .filter(
-        (b) => b.status === 'Overdue' || (b.status === 'Borrowed' && b.expectedReturnDate < today)
-      )
+      .filter((b) => b.status === 'Overdue' || (b.status === 'Borrowed' && b.expectedReturnDate < today))
       .forEach((b) => {
         list.push({
           id: `overdue-${b.borrowId}`,
           type: 'overdue',
-          title: `Keterlambatan: ${b.itemName} (${b.quantity} unit)`,
-          subtitle: `Peminjam: ${b.borrowerName} • Batas Kembali: ${b.expectedReturnDate}`,
+          title: `Terlambat: ${b.itemName} (${b.quantity} unit)`,
+          subtitle: `Peminjam: ${b.borrowerName} · Tenggat: ${b.expectedReturnDate}`,
           severity: 'high',
           actionLabel: 'Proses Kembali',
           targetTab: 'borrow',
         });
       });
 
-    // 2. Damaged items needing attention
+    // 2. Damaged items
     activeItems
       .filter((i) => i.condition === 'Damaged')
       .forEach((i) => {
         list.push({
           id: `damaged-${i.itemId}`,
           type: 'damaged',
-          title: `Kondisi Rusak: ${i.name}`,
-          subtitle: `Kode: ${i.itemCode} • Lokasi: ${i.location} • Total: ${i.quantity} ${i.unit}`,
+          title: `Alat Rusak: ${i.name}`,
+          subtitle: `Kode: ${i.itemCode} · Lokasi: ${i.location} · Jumlah: ${i.quantity} ${i.unit}`,
           severity: 'high',
-          actionLabel: 'Catat Perbaikan',
+          actionLabel: 'Perbaikan',
           targetTab: 'maintenance',
           extraData: { itemId: i.itemId },
         });
       });
 
-    // 2b. Lost items (Hilang) needing attention
+    // 2b. Lost items
     activeItems
       .filter((i) => i.condition === 'Hilang')
       .forEach((i) => {
@@ -172,9 +187,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onSele
           id: `lost-${i.itemId}`,
           type: 'damaged',
           title: `Barang Hilang: ${i.name}`,
-          subtitle: `Kode: ${i.itemCode} • Lokasi Terakhir: ${i.location} • Qty: ${i.quantity} ${i.unit}`,
+          subtitle: `Kode: ${i.itemCode} · Lokasi Terakhir: ${i.location} · Qty: ${i.quantity} ${i.unit}`,
           severity: 'high',
-          actionLabel: 'Cek Inventaris',
+          actionLabel: 'Inventaris',
           targetTab: 'inventory',
           extraData: { filterCondition: 'Hilang' },
         });
@@ -187,8 +202,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onSele
         list.push({
           id: `maint-${m.maintenanceId}`,
           type: 'maintenance',
-          title: `Sedang Maintenance: ${m.itemName} (${m.quantity} unit)`,
-          subtitle: `Status: ${m.repairStatus === 'Reported' ? 'Menunggu Perbaikan' : 'Dalam Pengerjaan'} • PIC: ${m.pic}`,
+          title: `Perawatan: ${m.itemName} (${m.quantity} unit)`,
+          subtitle: `${m.repairStatus === 'Reported' ? 'Menunggu Perbaikan' : 'Sedang Diperbaiki'} · PIC: ${m.pic}`,
           severity: m.repairStatus === 'Reported' ? 'high' : 'medium',
           actionLabel: 'Update Status',
           targetTab: 'maintenance',
@@ -200,10 +215,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onSele
       list.push({
         id: `lowstock-${item.itemId}`,
         type: 'low_stock',
-        title: `Stok Menipis: ${item.name}`,
-        subtitle: `Sisa: ${item.quantity} ${item.unit} (Min: ${item.minimumStock} ${item.unit}) • Lokasi: ${item.location}`,
+        title: `Stok Rendah: ${item.name}`,
+        subtitle: `Tersisa: ${item.quantity} ${item.unit} (Min: ${item.minimumStock} ${item.unit}) · Lokasi: ${item.location}`,
         severity: item.quantity === 0 ? 'high' : 'medium',
-        actionLabel: 'Restock Sekarang',
+        actionLabel: 'Restock',
         targetTab: 'restock',
         extraData: { itemId: item.itemId },
       });
@@ -216,23 +231,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onSele
         list.push({
           id: `rst-tobuy-${r.restockId}`,
           type: 'restock_tobuy',
-          title: `Rencana Beli: ${r.itemName}`,
-          subtitle: `Rekomendasi Beli: ${r.recommendedQuantity} unit • Stok Saat Ini: ${r.currentStock}`,
+          title: `Pengadaan: ${r.itemName}`,
+          subtitle: `Rekomendasi: ${r.recommendedQuantity} unit · Stok Sekarang: ${r.currentStock}`,
           severity: 'medium',
           actionLabel: 'Buat Pesanan',
           targetTab: 'restock',
         });
       });
 
-    // 6. Restocks with status 'Ordered' (waiting to be received)
+    // 6. Restocks with status 'Ordered'
     restocks
       .filter((r) => r.status === 'Ordered')
       .forEach((r) => {
         list.push({
           id: `rst-ordered-${r.restockId}`,
           type: 'restock_ordered',
-          title: `Menunggu Pengiriman: ${r.itemName}`,
-          subtitle: `Supplier: ${r.supplier || '-'} • Dipesan: ${r.orderedDate || '-'}`,
+          title: `Dalam Pengiriman: ${r.itemName}`,
+          subtitle: `Supplier: ${r.supplier || '-'} · Dipesan: ${r.orderedDate || '-'}`,
           severity: 'info',
           actionLabel: 'Terima Barang',
           targetTab: 'restock',
@@ -242,367 +257,323 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate, onSele
     return list;
   }, [borrows, activeItems, maintenance, lowStockItems, restocks]);
 
-  const categoryColors = [
-    'from-emerald-500 to-teal-600',
-    'from-sky-500 to-blue-600',
-    'from-violet-500 to-purple-600',
-    'from-amber-500 to-orange-600',
-    'from-pink-500 to-rose-600',
-    'from-cyan-500 to-indigo-600',
-  ];
+  const todayStr = new Date().toISOString().split('T')[0];
 
   return (
     <div className="space-y-6">
-      {/* Welcome Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-xs font-semibold uppercase tracking-wider text-emerald-400 bg-emerald-950/80 px-2.5 py-0.5 rounded-full border border-emerald-800/60">
-                Pusat Kontrol Laboratorium
-              </span>
-              <span className="text-xs text-slate-400">
-                Update Real-time: {new Date().toLocaleDateString('id-ID', { dateStyle: 'full' })}
-              </span>
-            </div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">
-              Ringkasan Operasional Laboratorium Sains
-            </h1>
-            <p className="text-sm text-slate-300 mt-1 max-w-2xl">
-              Pantau ketersediaan peralatan, praktikum aktif, barang rusak, perbaikan berkala, dan kebutuhan restock
-              secara akurat dan terintegrasi.
-            </p>
-          </div>
+      {/* Top Welcome & Quick Actions */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-900 dark:text-white tracking-tight">
+            Dashboard Laboratorium
+          </h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            Ringkasan ketersediaan alat, sirkulasi praktikum, dan status pemeliharaan lab sains.
+          </p>
+        </div>
 
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => onNavigate('inventory')}
-              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-semibold shadow-lg shadow-emerald-900/30 flex items-center gap-2 transition-all hover:translate-y-[-1px]"
-            >
-              <PackageSearch className="w-4 h-4" />
-              <span>Buka Inventory</span>
-            </button>
-            <button
-              onClick={() => onNavigate('borrow')}
-              className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-sm font-semibold border border-slate-700 flex items-center gap-2 transition-colors"
-            >
-              <span>Catat Pinjam</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onNavigate('borrow')}
+            className="px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-750 rounded-lg text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5"
+          >
+            <ArrowLeftRight className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+            <span>Peminjaman</span>
+          </button>
+          <button
+            onClick={() => onNavigate('inventory')}
+            className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white rounded-lg text-xs font-medium transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
+          >
+            <PackageSearch className="w-3.5 h-3.5" />
+            <span>Katalog Inventaris</span>
+          </button>
         </div>
       </div>
 
-      {/* 7 Summary Cards (Clickable to respective modules) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 6 Key Performance Indicators (Cards) */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
         {/* 1. Total Jenis Barang */}
         <div
           onClick={() => onNavigate('inventory')}
-          className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl p-5 shadow-sm hover:shadow-md cursor-pointer transition-all group"
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 rounded-xl p-4 transition-all cursor-pointer shadow-2xs group"
         >
-          <div className="flex items-center justify-between text-slate-400 mb-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Total Jenis Barang
-            </span>
-            <div className="p-2 rounded-xl bg-slate-800 text-cyan-400 group-hover:scale-110 transition-transform">
-              <Boxes className="w-5 h-5" />
-            </div>
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+            <span className="text-[11px] font-medium uppercase tracking-wider">Total Item</span>
+            <Boxes className="w-4 h-4 text-slate-400 dark:text-slate-500 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors" />
           </div>
-          <div className="text-3xl font-bold text-white tracking-tight">{totalJenisBarang}</div>
-          <div className="flex items-center justify-between text-xs text-slate-400 mt-2">
-            <span>Item terdaftar aktif</span>
-            <span className="text-cyan-400 group-hover:translate-x-1 transition-transform flex items-center">
-              Lihat <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
-            </span>
+          <div className="text-2xl font-bold text-slate-900 dark:text-white font-mono tabular-nums">
+            {totalJenisBarang}
+          </div>
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+            {totalQuantity.toLocaleString('id-ID')} unit fisik
           </div>
         </div>
 
-        {/* 2. Total Quantity */}
-        <div
-          onClick={() => onNavigate('inventory')}
-          className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl p-5 shadow-sm hover:shadow-md cursor-pointer transition-all group"
-        >
-          <div className="flex items-center justify-between text-slate-400 mb-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Total Quantity
-            </span>
-            <div className="p-2 rounded-xl bg-slate-800 text-teal-400 group-hover:scale-110 transition-transform">
-              <Layers className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="text-3xl font-bold text-white tracking-tight">
-            {totalQuantity.toLocaleString('id-ID')}
-          </div>
-          <div className="flex items-center justify-between text-xs text-slate-400 mt-2">
-            <span>Unit fisik seluruh item</span>
-            <span className="text-teal-400 group-hover:translate-x-1 transition-transform flex items-center">
-              Lihat <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
-            </span>
-          </div>
-        </div>
-
-        {/* 3. Available */}
+        {/* 2. Available Items */}
         <div
           onClick={() => onNavigate('inventory', { filterCondition: 'Good' })}
-          className="bg-slate-900 border border-emerald-900/40 hover:border-emerald-700/60 rounded-2xl p-5 shadow-sm hover:shadow-md cursor-pointer transition-all group"
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 rounded-xl p-4 transition-all cursor-pointer shadow-2xs group"
         >
-          <div className="flex items-center justify-between text-slate-400 mb-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
-              Available (Siap Pakai)
-            </span>
-            <div className="p-2 rounded-xl bg-emerald-950 text-emerald-400 group-hover:scale-110 transition-transform border border-emerald-800/60">
-              <CheckCircle2 className="w-5 h-5" />
-            </div>
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+            <span className="text-[11px] font-medium uppercase tracking-wider">Tersedia</span>
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
           </div>
-          <div className="text-3xl font-bold text-emerald-400 tracking-tight">
+          <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 font-mono tabular-nums">
             {totalAvailable.toLocaleString('id-ID')}
           </div>
-          <div className="flex items-center justify-between text-xs text-slate-400 mt-2">
-            <span>Bebas dipinjam/digunakan</span>
-            <span className="text-emerald-400 group-hover:translate-x-1 transition-transform flex items-center">
-              Filter <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
-            </span>
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+            Siap digunakan
           </div>
         </div>
 
-        {/* 4. Low Stock */}
-        <div
-          onClick={() => onNavigate('restock')}
-          className={`border rounded-2xl p-5 shadow-sm hover:shadow-md cursor-pointer transition-all group ${
-            lowStockCount > 0
-              ? 'bg-amber-950/20 border-amber-800/60 hover:border-amber-600'
-              : 'bg-slate-900 border-slate-800 hover:border-slate-700'
-          }`}
-        >
-          <div className="flex items-center justify-between text-slate-400 mb-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-amber-400">
-              Low Stock
-            </span>
-            <div className="p-2 rounded-xl bg-amber-950 text-amber-400 group-hover:scale-110 transition-transform border border-amber-800/60">
-              <TrendingDown className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="text-3xl font-bold text-amber-400 tracking-tight">{lowStockCount}</div>
-          <div className="flex items-center justify-between text-xs text-slate-400 mt-2">
-            <span>≤ Minimum Stock</span>
-            <span className="text-amber-400 font-medium group-hover:translate-x-1 transition-transform flex items-center">
-              Restock <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
-            </span>
-          </div>
-        </div>
-
-        {/* 5. Damaged & Hilang */}
-        <div
-          onClick={() => onNavigate('inventory', { filterCondition: lostCount > 0 && damagedCount === 0 ? 'Hilang' : 'Damaged' })}
-          className={`border rounded-2xl p-5 shadow-sm hover:shadow-md cursor-pointer transition-all group ${
-            damagedCount > 0 || lostCount > 0
-              ? 'bg-rose-950/20 border-rose-800/60 hover:border-rose-600'
-              : 'bg-slate-900 border-slate-800 hover:border-slate-700'
-          }`}
-        >
-          <div className="flex items-center justify-between text-slate-400 mb-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-rose-400">
-              Damaged / Hilang
-            </span>
-            <div className="p-2 rounded-xl bg-rose-950 text-rose-400 group-hover:scale-110 transition-transform border border-rose-800/60">
-              <Flame className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="flex items-baseline gap-2">
-            <div className="text-3xl font-bold text-rose-400 tracking-tight">{damagedCount}</div>
-            {lostCount > 0 && (
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-950 text-purple-300 border border-purple-800 flex items-center gap-1">
-                <HelpCircle className="w-3 h-3" />
-                {lostCount} Hilang
-              </span>
-            )}
-          </div>
-          <div className="flex items-center justify-between text-xs text-slate-400 mt-2">
-            <span>{lostCount > 0 ? `${damagedCount} rusak • ${lostCount} hilang` : 'Kondisi rusak / cacat'}</span>
-            <span className="text-rose-400 font-medium group-hover:translate-x-1 transition-transform flex items-center">
-              Lihat <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
-            </span>
-          </div>
-        </div>
-
-        {/* 6. Borrowed */}
+        {/* 3. Borrowed Items */}
         <div
           onClick={() => onNavigate('borrow')}
-          className="bg-slate-900 border border-indigo-900/40 hover:border-indigo-700/60 rounded-2xl p-5 shadow-sm hover:shadow-md cursor-pointer transition-all group"
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 rounded-xl p-4 transition-all cursor-pointer shadow-2xs group"
         >
-          <div className="flex items-center justify-between text-slate-400 mb-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-indigo-400">
-              Borrowed
-            </span>
-            <div className="p-2 rounded-xl bg-indigo-950 text-indigo-400 group-hover:scale-110 transition-transform border border-indigo-800/60">
-              <Clock className="w-5 h-5" />
-            </div>
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+            <span className="text-[11px] font-medium uppercase tracking-wider">Dipinjam</span>
+            <Clock className="w-4 h-4 text-blue-600 dark:text-blue-400" />
           </div>
-          <div className="text-3xl font-bold text-indigo-300 tracking-tight">{totalBorrowed}</div>
-          <div className="flex items-center justify-between text-xs text-slate-400 mt-2">
-            <span>Unit aktif dipinjam</span>
-            <span className="text-indigo-400 group-hover:translate-x-1 transition-transform flex items-center">
-              Lihat <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
-            </span>
+          <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 font-mono tabular-nums">
+            {totalBorrowed}
+          </div>
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+            Unit sedang di luar
           </div>
         </div>
 
-        {/* 7. Nilai Estimasi Inventaris (Spans 2 columns on larger screens) */}
-        <div className="sm:col-span-2 bg-gradient-to-br from-slate-900 via-slate-850 to-slate-900 border border-slate-700/70 rounded-2xl p-5 shadow-sm">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-                Nilai Estimasi Inventaris
-              </span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                {itemsWithPriceCount}/{totalItemsCount} Item Terdata
-              </span>
-            </div>
-            <div className="p-2 rounded-xl bg-slate-800 text-amber-400">
-              <Coins className="w-5 h-5" />
-            </div>
+        {/* 4. Maintenance Items */}
+        <div
+          onClick={() => onNavigate('maintenance')}
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 rounded-xl p-4 transition-all cursor-pointer shadow-2xs group"
+        >
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+            <span className="text-[11px] font-medium uppercase tracking-wider">Perawatan</span>
+            <Wrench className="w-4 h-4 text-amber-600 dark:text-amber-400" />
           </div>
-
-          <div className="text-2xl sm:text-3xl font-bold text-emerald-400 tracking-tight">
-            Rp {totalEstimatedValue.toLocaleString('id-ID')}
+          <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 font-mono tabular-nums">
+            {activeMaintenanceCount}
           </div>
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+            Dalam proses perbaikan
+          </div>
+        </div>
 
-          <p className="text-xs text-slate-400 mt-2 flex items-center gap-1.5">
-            <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            {itemsWithPriceCount === totalItemsCount ? (
-              <span>Dihitung berdasarkan harga beli seluruh item terdaftar.</span>
-            ) : itemsWithPriceCount > 0 ? (
-              <span>
-                Dihitung dari {itemsWithPriceCount} item dengan harga pembelian valid (
-                {totalItemsCount - itemsWithPriceCount} item belum memiliki data harga).
+        {/* 5. Low Stock Alerts */}
+        <div
+          onClick={() => onNavigate('restock')}
+          className={`border rounded-xl p-4 transition-all cursor-pointer shadow-2xs group ${
+            lowStockCount > 0
+              ? 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/60'
+              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
+          }`}
+        >
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+            <span className="text-[11px] font-medium uppercase tracking-wider">Stok Rendah</span>
+            <TrendingDown className={`w-4 h-4 ${lowStockCount > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'}`} />
+          </div>
+          <div className={`text-2xl font-bold font-mono tabular-nums ${lowStockCount > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-900 dark:text-white'}`}>
+            {lowStockCount}
+          </div>
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+            Di bawah batas minimum
+          </div>
+        </div>
+
+        {/* 6. Damaged / Hilang */}
+        <div
+          onClick={() => onNavigate('inventory', { filterCondition: lostCount > 0 && damagedCount === 0 ? 'Hilang' : 'Damaged' })}
+          className={`border rounded-xl p-4 transition-all cursor-pointer shadow-2xs group ${
+            damagedCount > 0 || lostCount > 0
+              ? 'bg-rose-50/50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/60'
+              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
+          }`}
+        >
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+            <span className="text-[11px] font-medium uppercase tracking-wider">Rusak / Hilang</span>
+            <Flame className={`w-4 h-4 ${damagedCount > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`} />
+          </div>
+          <div className="flex items-baseline gap-1.5">
+            <span className={`text-2xl font-bold font-mono tabular-nums ${damagedCount > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}`}>
+              {damagedCount}
+            </span>
+            {lostCount > 0 && (
+              <span className="text-[11px] font-medium text-purple-700 dark:text-purple-400 font-mono">
+                +{lostCount} hilang
               </span>
-            ) : (
-              <span className="text-amber-400">Data harga pembelian belum tersedia.</span>
             )}
-          </p>
+          </div>
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+            {lostCount > 0 ? `${damagedCount} rusak · ${lostCount} hilang` : 'Memerlukan tindakan'}
+          </div>
         </div>
       </div>
 
-      {/* Main Grid: Needs Attention & Category Breakdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Needs Attention Section (2 Columns) */}
-        <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-xl bg-amber-950/80 text-amber-400 border border-amber-800/60">
-                <AlertTriangle className="w-5 h-5" />
+      {/* Main Grid: Upcoming Return Deadlines & Priority Attention */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Left (7 cols): Upcoming Return Deadlines & Activity Stream */}
+        <div className="lg:col-span-7 space-y-6">
+          {/* Upcoming Return Deadlines */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-2xs">
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                  Tenggat Pengembalian Terdekat
+                </h3>
               </div>
-              <div>
-                <h2 className="font-bold text-lg text-white">⚠️ Needs Attention</h2>
-                <p className="text-xs text-slate-400">
-                  Item yang membutuhkan tindak lanjut operasional segera
-                </p>
-              </div>
+              <button
+                onClick={() => onNavigate('borrow')}
+                className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 cursor-pointer font-medium"
+              >
+                <span>Kelola Semua</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
             </div>
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
-              {needsAttentionList.length} Item Perlu Perhatian
-            </span>
+
+            <div className="divide-y divide-slate-100 dark:divide-slate-800/80">
+              {upcomingDeadlines.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-400 dark:text-slate-500">
+                  Tidak ada peminjaman aktif yang menunggu pengembalian saat ini.
+                </div>
+              ) : (
+                upcomingDeadlines.map((record) => {
+                  const isOverdue = record.status === 'Overdue' || record.expectedReturnDate < todayStr;
+                  return (
+                    <div
+                      key={record.borrowId}
+                      className="p-3.5 flex items-center justify-between gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-xs text-slate-900 dark:text-white truncate">
+                            {record.itemName}
+                          </span>
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                            ×{record.quantity}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-2">
+                          <span>{record.borrowerName}</span>
+                          <span aria-hidden="true">·</span>
+                          <span>{record.purpose}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0">
+                        <div className="text-right">
+                          <div className={`text-[11px] font-mono tabular-nums ${isOverdue ? 'text-rose-600 dark:text-rose-400 font-semibold' : 'text-slate-600 dark:text-slate-300'}`}>
+                            {record.expectedReturnDate}
+                          </div>
+                          <div className="text-[10px] text-slate-400">
+                            {isOverdue ? 'Terlambat' : 'Batas Kembali'}
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => onNavigate('borrow')}
+                          className="px-2.5 py-1 text-xs font-medium rounded-md bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 dark:bg-slate-800 dark:hover:bg-blue-950 dark:text-slate-200 dark:hover:text-blue-300 transition-colors cursor-pointer"
+                        >
+                          Proses
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
 
-          {needsAttentionList.length === 0 ? (
-            <div className="text-center py-12 px-4 border border-dashed border-slate-800 rounded-xl bg-slate-900/50">
-              <CheckCircle2 className="w-12 h-12 text-emerald-400 mx-auto mb-3" />
-              <h3 className="text-sm font-semibold text-white">Semua Operasional Terkendali!</h3>
-              <p className="text-xs text-slate-400 max-w-sm mx-auto mt-1">
-                Tidak ada barang dengan stok menipis, barang rusak belum tertangani, atau keterlambatan peminjaman saat
-                ini.
-              </p>
+          {/* Attention Items List */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-2xs">
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-500" />
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                  Item Perlu Perhatian ({needsAttentionList.length})
+                </h3>
+              </div>
             </div>
-          ) : (
-            <div className="divide-y divide-slate-800 max-h-[380px] overflow-y-auto pr-1">
-              {needsAttentionList.map((item) => (
-                <div
-                  key={item.id}
-                  className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-850/60 px-3 rounded-xl transition-colors"
-                >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                          item.severity === 'high'
-                            ? 'bg-rose-950 text-rose-300 border border-rose-800'
-                            : item.severity === 'medium'
-                            ? 'bg-amber-950 text-amber-300 border border-amber-800'
-                            : 'bg-sky-950 text-sky-300 border border-sky-800'
-                        }`}
-                      >
-                        {item.severity === 'high' ? 'Penting' : item.severity === 'medium' ? 'Perhatian' : 'Info'}
-                      </span>
-                      <h4 className="text-sm font-semibold text-slate-100">{item.title}</h4>
-                    </div>
-                    <p className="text-xs text-slate-400">{item.subtitle}</p>
-                  </div>
 
-                  <button
-                    onClick={() => onNavigate(item.targetTab, item.extraData)}
-                    className="shrink-0 self-start sm:self-center px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-emerald-600 text-slate-200 hover:text-white border border-slate-700 hover:border-emerald-500 transition-all flex items-center gap-1.5"
+            <div className="divide-y divide-slate-100 dark:divide-slate-800/80 max-h-96 overflow-y-auto">
+              {needsAttentionList.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-400 dark:text-slate-500">
+                  Semua inventaris dalam kondisi normal. Tidak ada tindakan mendesak.
+                </div>
+              ) : (
+                needsAttentionList.slice(0, 8).map((item) => (
+                  <div
+                    key={item.id}
+                    className="p-3.5 flex items-center justify-between gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                   >
-                    <span>{item.actionLabel}</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium text-slate-900 dark:text-white truncate">
+                        {item.title}
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                        {item.subtitle}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => onNavigate(item.targetTab, item.extraData)}
+                      className="px-2.5 py-1 text-xs font-medium rounded-md bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 dark:bg-slate-800 dark:hover:bg-blue-950 dark:text-slate-200 dark:hover:text-blue-300 transition-colors cursor-pointer shrink-0"
+                    >
+                      {item.actionLabel}
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Right (5 cols): Category Distribution & Total Inventory Valuation */}
+        <div className="lg:col-span-5 space-y-6">
+          {/* Category Distribution */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-2xs">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200 mb-3 flex items-center justify-between">
+              <span>Distribusi Kategori</span>
+              <span className="text-[11px] font-normal text-slate-400 font-mono">
+                {categoryStats.length} Kategori
+              </span>
+            </h3>
+
+            <div className="space-y-3">
+              {categoryStats.map((cat) => (
+                <div key={cat.name} className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-slate-800 dark:text-slate-200 truncate">
+                      {cat.name}
+                    </span>
+                    <span className="text-slate-500 dark:text-slate-400 font-mono tabular-nums text-[11px]">
+                      {cat.totalQty.toLocaleString('id-ID')} unit ({cat.percentage}%)
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-600 dark:bg-blue-500 rounded-full transition-all duration-300"
+                      style={{ width: `${Math.max(cat.percentage, 3)}%` }}
+                    />
+                  </div>
                 </div>
               ))}
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Inventory Category Breakdown (1 Column) */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm flex flex-col">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-bold text-base text-white">Inventaris Berdasarkan Kategori</h2>
-              <p className="text-xs text-slate-400">Sebaran kuantitas alat & bahan lab sains</p>
+          {/* Total Valuation Card */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-2xs">
+            <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-wider">Estimasi Nilai Inventaris</span>
+              <Coins className="w-4 h-4 text-blue-600 dark:text-blue-400" />
             </div>
-          </div>
-
-          <div className="space-y-4 flex-1">
-            {categoryStats.map((cat, idx) => (
-              <div key={cat.name} className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`w-2.5 h-2.5 rounded-full bg-gradient-to-r ${
-                        categoryColors[idx % categoryColors.length]
-                      }`}
-                    />
-                    <span className="font-medium text-slate-200">{cat.name}</span>
-                    <span className="text-slate-500">({cat.itemCount} jenis)</span>
-                  </div>
-                  <span className="font-semibold text-slate-300">
-                    {cat.totalQty} unit ({cat.percentage}%)
-                  </span>
-                </div>
-
-                {/* Progress bar */}
-                <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full bg-gradient-to-r ${
-                      categoryColors[idx % categoryColors.length]
-                    }`}
-                    style={{ width: `${Math.max(4, cat.percentage)}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-
-            {categoryStats.length === 0 && (
-              <div className="text-center py-8 text-xs text-slate-400">Belum ada data kategori barang.</div>
-            )}
-          </div>
-
-          <div className="pt-4 mt-auto border-t border-slate-800">
-            <button
-              onClick={() => onNavigate('inventory')}
-              className="w-full py-2 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-750 transition-colors flex items-center justify-center gap-1.5"
-            >
-              <span>Kelola Seluruh Item di Inventory</span>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
+            <div className="text-2xl font-bold text-slate-900 dark:text-white font-mono tabular-nums">
+              Rp {totalEstimatedValue.toLocaleString('id-ID')}
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+              Berdasarkan {itemsWithPriceCount} dari {totalItemsCount} item yang memiliki data harga pembelian satuan.
+            </p>
           </div>
         </div>
       </div>
