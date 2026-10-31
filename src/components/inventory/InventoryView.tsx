@@ -69,6 +69,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [detailItem, setDetailItem] = useState<InventoryItem | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   // New Category / Location modal quick inputs
   const [showAddCategoryModal, setShowAddCategoryModal] = useState(false);

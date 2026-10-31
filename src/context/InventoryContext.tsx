@@ -28,6 +28,7 @@ import {
   auth,
   handleFirestoreError,
   testFirestoreConnection,
+  cleanForFirestore,
 } from '../lib/firebase';
 import {
   signInWithPopup,
@@ -84,10 +85,10 @@ interface InventoryContextType {
   getItemStockInfo: (itemId: string) => CalculatedItemStock;
 
   // Inventory actions
-  addItem: (item: Omit<InventoryItem, 'itemId' | 'createdAt' | 'updatedAt'>) => { success: boolean; error?: string };
-  updateItem: (itemId: string, updates: Partial<InventoryItem>) => { success: boolean; error?: string };
-  archiveItem: (itemId: string) => { success: boolean; error?: string };
-  unarchiveItem: (itemId: string) => { success: boolean; error?: string };
+  addItem: (item: Omit<InventoryItem, 'itemId' | 'createdAt' | 'updatedAt'>) => Promise<{ success: boolean; error?: string }>;
+  updateItem: (itemId: string, updates: Partial<InventoryItem>) => Promise<{ success: boolean; error?: string }>;
+  archiveItem: (itemId: string) => Promise<{ success: boolean; error?: string }>;
+  unarchiveItem: (itemId: string) => Promise<{ success: boolean; error?: string }>;
 
   // Borrow actions
   createBorrow: (params: {
@@ -100,7 +101,7 @@ interface InventoryContextType {
     expectedReturnDate: string;
     purpose: string;
     notes?: string;
-  }) => { success: boolean; error?: string };
+  }) => Promise<{ success: boolean; error?: string }>;
 
   processReturn: (params: {
     borrowId: string;
@@ -108,7 +109,7 @@ interface InventoryContextType {
     returnCondition: 'Good' | 'Fair' | 'Damaged' | 'Hilang';
     notes?: string;
     damageDescriptionIfAny?: string;
-  }) => { success: boolean; error?: string };
+  }) => Promise<{ success: boolean; error?: string }>;
 
   // Maintenance actions
   createMaintenance: (params: {
@@ -119,7 +120,7 @@ interface InventoryContextType {
     pic: string;
     repairCost?: number;
     notes?: string;
-  }) => { success: boolean; error?: string };
+  }) => Promise<{ success: boolean; error?: string }>;
 
   updateMaintenanceStatus: (params: {
     maintenanceId: string;
@@ -129,7 +130,7 @@ interface InventoryContextType {
     notes?: string;
     resolvedCondition?: 'Good' | 'Fair';
     retireUnitsIfNotRepairable?: boolean;
-  }) => { success: boolean; error?: string };
+  }) => Promise<{ success: boolean; error?: string }>;
 
   // Restock actions
   createOrUpdateRestock: (params: {
@@ -137,21 +138,21 @@ interface InventoryContextType {
     recommendedQuantity: number;
     targetStock?: number;
     notes?: string;
-  }) => { success: boolean; error?: string };
+  }) => Promise<{ success: boolean; error?: string }>;
 
   orderRestock: (params: {
     restockId: string;
     supplier: string;
     orderedDate: string;
     notes?: string;
-  }) => { success: boolean; error?: string };
+  }) => Promise<{ success: boolean; error?: string }>;
 
   receiveRestock: (params: {
     restockId: string;
     receivedQuantity: number;
     receivedDate: string;
     notes?: string;
-  }) => { success: boolean; error?: string };
+  }) => Promise<{ success: boolean; error?: string }>;
 
   // Utility
   purgeDummyData: () => Promise<void>;
@@ -418,18 +419,11 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const initFirebaseListeners = async () => {
       setIsSyncing(true);
-      const testResult = await testFirestoreConnection();
-      if (!testResult.connected) {
-        setIsFirebaseConnected(false);
-        setFirestoreError(testResult.error || 'Cannot connect to Firebase');
-        setIsSyncing(false);
-        return;
-      }
       setIsFirebaseConnected(true);
       setFirestoreError(null);
 
-      // Clean up any residual dummy records from Firestore
-      await cleanupFirestoreDummyData();
+      // Clean up any residual dummy records from Firestore in background
+      cleanupFirestoreDummyData().catch((err) => console.warn('Dummy cleanup warning:', err));
 
       try {
         // 1. Items listener: load only real items from Firestore
@@ -440,11 +434,14 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               .map((docSnap) => docSnap.data() as InventoryItem)
               .filter((item) => !DUMMY_ITEM_IDS.includes(item.itemId));
             setItems(remoteItems);
+            setIsFirebaseConnected(true);
             setIsSyncing(false);
+            setFirestoreError(null);
           },
           (err) => {
             const errInfo = handleFirestoreError(err, 'list', 'inventoryItems');
             setFirestoreError(errInfo.error);
+            setIsFirebaseConnected(false);
             setIsSyncing(false);
           }
         );
@@ -758,7 +755,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Optimistic local update
     setAuditLogs((prev) => [newLog, ...prev]);
 
-    setDoc(doc(db, 'auditLogs', newLog.logId), newLog).catch((err) => {
+    setDoc(doc(db, 'auditLogs', newLog.logId), cleanForFirestore(newLog)).catch((err) => {
       handleFirestoreError(err, 'create', 'auditLogs', newLog.logId);
     });
   };
@@ -774,7 +771,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     setDoc(
       doc(db, 'settings', 'global'),
-      { categories: newCategories, updatedAt: new Date().toISOString() },
+      cleanForFirestore({ categories: newCategories, updatedAt: new Date().toISOString() }),
       { merge: true }
     ).catch((err) => {
       handleFirestoreError(err, 'update', 'settings', 'global');
@@ -792,7 +789,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     setDoc(
       doc(db, 'settings', 'global'),
-      { locations: newLocations, updatedAt: new Date().toISOString() },
+      cleanForFirestore({ locations: newLocations, updatedAt: new Date().toISOString() }),
       { merge: true }
     ).catch((err) => {
       handleFirestoreError(err, 'update', 'settings', 'global');
@@ -865,10 +862,12 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   // 1. Add Item
-  const addItem = (itemData: Omit<InventoryItem, 'itemId' | 'createdAt' | 'updatedAt'>): { success: boolean; error?: string } => {
+  const addItem = async (
+    itemData: Omit<InventoryItem, 'itemId' | 'createdAt' | 'updatedAt'>
+  ): Promise<{ success: boolean; error?: string }> => {
     if (!isStaff) return { success: false, error: 'Hanya Admin/Staf Lab yang dapat menambah barang.' };
-    if (!itemData.name.trim()) return { success: false, error: 'Nama barang wajib diisi.' };
-    if (!itemData.itemCode.trim()) return { success: false, error: 'ID/Kode barang wajib diisi.' };
+    if (!itemData.name?.trim()) return { success: false, error: 'Nama barang wajib diisi.' };
+    if (!itemData.itemCode?.trim()) return { success: false, error: 'ID/Kode barang wajib diisi.' };
 
     const exists = items.some(
       (i) => i.itemCode.toLowerCase() === itemData.itemCode.trim().toLowerCase()
@@ -892,6 +891,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       itemId: 'item-' + Date.now(),
       itemCode: itemData.itemCode.trim().toUpperCase(),
       name: itemData.name.trim(),
+      status: itemData.status || 'Active',
       createdAt: now,
       updatedAt: now,
     };
@@ -899,26 +899,35 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Optimistic local update
     setItems((prev) => [newItem, ...prev]);
 
-    // Persist to Firestore
-    setDoc(doc(db, 'inventoryItems', newItem.itemId), newItem).catch((err) => {
-      handleFirestoreError(err, 'create', 'inventoryItems', newItem.itemId);
-    });
+    try {
+      const sanitized = cleanForFirestore(newItem);
+      await setDoc(doc(db, 'inventoryItems', newItem.itemId), sanitized);
 
-    logAudit(
-      'Inventory',
-      'ADD_ITEM',
-      `Menambahkan item baru: ${newItem.name} (${newItem.itemCode}) sejumlah ${newItem.quantity} ${newItem.unit}`,
-      newItem.itemId,
-      newItem.itemCode,
-      '-',
-      `Stok: ${newItem.quantity}, Kondisi: ${newItem.condition}, Lokasi: ${newItem.location}`
-    );
+      logAudit(
+        'Inventory',
+        'ADD_ITEM',
+        `Menambahkan item baru: ${newItem.name} (${newItem.itemCode}) sejumlah ${newItem.quantity} ${newItem.unit}`,
+        newItem.itemId,
+        newItem.itemCode,
+        '-',
+        `Stok: ${newItem.quantity}, Kondisi: ${newItem.condition}, Lokasi: ${newItem.location}`
+      );
 
-    return { success: true };
+      return { success: true };
+    } catch (err: any) {
+      const errInfo = handleFirestoreError(err, 'create', 'inventoryItems', newItem.itemId);
+      setFirestoreError(errInfo.error);
+      // Revert optimistic update
+      setItems((prev) => prev.filter((i) => i.itemId !== newItem.itemId));
+      return { success: false, error: `Gagal menyimpan ke Firestore: ${err?.message || err}` };
+    }
   };
 
   // 2. Update Item
-  const updateItem = (itemId: string, updates: Partial<InventoryItem>): { success: boolean; error?: string } => {
+  const updateItem = async (
+    itemId: string,
+    updates: Partial<InventoryItem>
+  ): Promise<{ success: boolean; error?: string }> => {
     if (!isStaff) return { success: false, error: 'Hanya Admin/Staf Lab yang dapat mengubah data barang.' };
 
     const existing = items.find((i) => i.itemId === itemId);
@@ -956,30 +965,36 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Optimistic local update
     setItems((prev) => prev.map((i) => (i.itemId === itemId ? updatedItem : i)));
 
-    // Persist to Firestore
-    updateDoc(doc(db, 'inventoryItems', itemId), updates).catch((err) => {
-      handleFirestoreError(err, 'update', 'inventoryItems', itemId);
-    });
+    try {
+      const sanitized = cleanForFirestore(updatedItem);
+      await setDoc(doc(db, 'inventoryItems', itemId), sanitized, { merge: true });
 
-    const changes = Object.keys(updates)
-      .map((k) => `${k}: ${(existing as any)[k]} -> ${(updates as any)[k]}`)
-      .join(', ');
+      const changes = Object.keys(updates)
+        .map((k) => `${k}: ${(existing as any)[k]} -> ${(updates as any)[k]}`)
+        .join(', ');
 
-    logAudit(
-      'Inventory',
-      'UPDATE_ITEM',
-      `Memperbarui barang: ${updatedItem.name} (${updatedItem.itemCode})`,
-      itemId,
-      updatedItem.itemCode,
-      JSON.stringify(existing),
-      changes
-    );
+      logAudit(
+        'Inventory',
+        'UPDATE_ITEM',
+        `Memperbarui barang: ${updatedItem.name} (${updatedItem.itemCode})`,
+        itemId,
+        updatedItem.itemCode,
+        JSON.stringify(existing),
+        changes
+      );
 
-    return { success: true };
+      return { success: true };
+    } catch (err: any) {
+      const errInfo = handleFirestoreError(err, 'update', 'inventoryItems', itemId);
+      setFirestoreError(errInfo.error);
+      // Revert optimistic update
+      setItems((prev) => prev.map((i) => (i.itemId === itemId ? existing : i)));
+      return { success: false, error: `Gagal memperbarui di Firestore: ${err?.message || err}` };
+    }
   };
 
   // 3. Archive / Unarchive Item
-  const archiveItem = (itemId: string): { success: boolean; error?: string } => {
+  const archiveItem = async (itemId: string): Promise<{ success: boolean; error?: string }> => {
     if (!isStaff) return { success: false, error: 'Hanya Admin yang dapat mengarsipkan barang.' };
     const existing = items.find((i) => i.itemId === itemId);
     if (!existing) return { success: false, error: 'Barang tidak ditemukan.' };
@@ -999,24 +1014,28 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       )
     );
 
-    updateDoc(doc(db, 'inventoryItems', itemId), { status: 'Archived', updatedAt: now }).catch((err) => {
+    try {
+      await setDoc(doc(db, 'inventoryItems', itemId), { status: 'Archived', updatedAt: now }, { merge: true });
+
+      logAudit(
+        'Inventory',
+        'ARCHIVE_ITEM',
+        `Mengarsipkan barang ${existing.name} (${existing.itemCode})`,
+        itemId,
+        existing.itemCode,
+        'Active',
+        'Archived'
+      );
+
+      return { success: true };
+    } catch (err: any) {
       handleFirestoreError(err, 'update', 'inventoryItems', itemId);
-    });
-
-    logAudit(
-      'Inventory',
-      'ARCHIVE_ITEM',
-      `Mengarsipkan barang ${existing.name} (${existing.itemCode})`,
-      itemId,
-      existing.itemCode,
-      'Active',
-      'Archived'
-    );
-
-    return { success: true };
+      setItems((prev) => prev.map((i) => (i.itemId === itemId ? existing : i)));
+      return { success: false, error: `Gagal mengarsipkan di Firestore: ${err?.message || err}` };
+    }
   };
 
-  const unarchiveItem = (itemId: string): { success: boolean; error?: string } => {
+  const unarchiveItem = async (itemId: string): Promise<{ success: boolean; error?: string }> => {
     if (!isStaff) return { success: false, error: 'Hanya Admin yang dapat memulihkan barang.' };
     const existing = items.find((i) => i.itemId === itemId);
     if (!existing) return { success: false, error: 'Barang tidak ditemukan.' };
@@ -1028,25 +1047,29 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       )
     );
 
-    updateDoc(doc(db, 'inventoryItems', itemId), { status: 'Active', updatedAt: now }).catch((err) => {
+    try {
+      await setDoc(doc(db, 'inventoryItems', itemId), { status: 'Active', updatedAt: now }, { merge: true });
+
+      logAudit(
+        'Inventory',
+        'UNARCHIVE_ITEM',
+        `Mengaktifkan kembali barang ${existing.name} (${existing.itemCode})`,
+        itemId,
+        existing.itemCode,
+        'Archived',
+        'Active'
+      );
+
+      return { success: true };
+    } catch (err: any) {
       handleFirestoreError(err, 'update', 'inventoryItems', itemId);
-    });
-
-    logAudit(
-      'Inventory',
-      'UNARCHIVE_ITEM',
-      `Mengaktifkan kembali barang ${existing.name} (${existing.itemCode})`,
-      itemId,
-      existing.itemCode,
-      'Archived',
-      'Active'
-    );
-
-    return { success: true };
+      setItems((prev) => prev.map((i) => (i.itemId === itemId ? existing : i)));
+      return { success: false, error: `Gagal memulihkan di Firestore: ${err?.message || err}` };
+    }
   };
 
   // 4. Create Borrow
-  const createBorrow = ({
+  const createBorrow = async ({
     borrowerId,
     borrowerName,
     borrowerRole,
@@ -1066,7 +1089,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     expectedReturnDate: string;
     purpose: string;
     notes?: string;
-  }): { success: boolean; error?: string } => {
+  }): Promise<{ success: boolean; error?: string }> => {
     const item = items.find((i) => i.itemId === itemId);
     if (!item) return { success: false, error: 'Barang tidak ditemukan.' };
     if (item.status === 'Archived') return { success: false, error: 'Barang berstatus diarsipkan dan tidak dapat dipinjam.' };
@@ -1109,25 +1132,29 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     setBorrows((prev) => [newBorrow, ...prev]);
 
-    setDoc(doc(db, 'borrowRecords', newBorrow.borrowId), newBorrow).catch((err) => {
+    try {
+      await setDoc(doc(db, 'borrowRecords', newBorrow.borrowId), cleanForFirestore(newBorrow));
+
+      logAudit(
+        'Borrow',
+        'BORROW_ITEM',
+        `Peminjaman ${quantity} ${item.unit} ${item.name} (${item.itemCode}) oleh ${borrowerName} untuk "${purpose}"`,
+        item.itemId,
+        item.itemCode,
+        `Tersedia sebelumnya: ${stock.availableQuantity}`,
+        `Tersedia sekarang: ${stock.availableQuantity - quantity}`
+      );
+
+      return { success: true };
+    } catch (err: any) {
       handleFirestoreError(err, 'create', 'borrowRecords', newBorrow.borrowId);
-    });
-
-    logAudit(
-      'Borrow',
-      'BORROW_ITEM',
-      `Peminjaman ${quantity} ${item.unit} ${item.name} (${item.itemCode}) oleh ${borrowerName} untuk "${purpose}"`,
-      item.itemId,
-      item.itemCode,
-      `Tersedia sebelumnya: ${stock.availableQuantity}`,
-      `Tersedia sekarang: ${stock.availableQuantity - quantity}`
-    );
-
-    return { success: true };
+      setBorrows((prev) => prev.filter((b) => b.borrowId !== newBorrow.borrowId));
+      return { success: false, error: `Gagal menyimpan peminjaman ke Firestore: ${err?.message || err}` };
+    }
   };
 
   // 5. Process Return
-  const processReturn = ({
+  const processReturn = async ({
     borrowId,
     actualReturnDate,
     returnCondition,
@@ -1139,7 +1166,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     returnCondition: 'Good' | 'Fair' | 'Damaged' | 'Hilang';
     notes?: string;
     damageDescriptionIfAny?: string;
-  }): { success: boolean; error?: string } => {
+  }): Promise<{ success: boolean; error?: string }> => {
     if (!isStaff) return { success: false, error: 'Hanya Staf Lab yang dapat memproses pengembalian barang.' };
 
     const borrow = borrows.find((b) => b.borrowId === borrowId);
@@ -1167,93 +1194,91 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       prev.map((b) => (b.borrowId === borrowId ? { ...b, ...borrowUpdates } : b))
     );
 
-    updateDoc(doc(db, 'borrowRecords', borrowId), borrowUpdates).catch((err) => {
+    try {
+      await setDoc(doc(db, 'borrowRecords', borrowId), cleanForFirestore(borrowUpdates), { merge: true });
+
+      if (returnCondition === 'Damaged') {
+        const desc =
+          damageDescriptionIfAny?.trim() ||
+          `Kerusakan dilaporkan saat pengembalian oleh ${borrow.borrowerName}: ${notes || 'Kondisi barang rusak/cacat.'}`;
+
+        const newMaint: MaintenanceRecord = {
+          maintenanceId: 'maint-' + Date.now(),
+          itemId: item.itemId,
+          itemCode: item.itemCode,
+          itemName: item.name,
+          quantity: borrow.quantity,
+          damageDescription: desc,
+          repairStatus: 'Reported',
+          reportedDate: actualReturnDate,
+          pic: currentUser?.name || 'Staf Lab',
+          repairCost: 0,
+          notes: `Berasal dari pengembalian peminjaman (${borrow.borrowId})`,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        setMaintenance((prev) => [newMaint, ...prev]);
+        await setDoc(doc(db, 'maintenanceRecords', newMaint.maintenanceId), cleanForFirestore(newMaint));
+
+        logAudit(
+          'Borrow',
+          'RETURN_DAMAGED',
+          `Pengembalian barang dalam kondisi RUSAK: ${borrow.quantity} ${item.unit} ${item.name}. Langsung dimasukkan ke antrean Maintenance.`,
+          item.itemId,
+          item.itemCode,
+          `Status Peminjaman: ${borrow.status}`,
+          `Status Pengembalian: Returned (Damaged). Maintenance ID: ${newMaint.maintenanceId}`
+        );
+      } else if (returnCondition === 'Hilang') {
+        const itemNotes = item.notes
+          ? `${item.notes} | [Hilang saat dipinjam oleh ${borrow.borrowerName} (${actualReturnDate})]`
+          : `[Hilang saat dipinjam oleh ${borrow.borrowerName} (${actualReturnDate})]`;
+
+        setItems((prev) =>
+          prev.map((i) =>
+            i.itemId === item.itemId
+              ? { ...i, condition: 'Hilang', notes: itemNotes, updatedAt: now }
+              : i
+          )
+        );
+
+        await setDoc(doc(db, 'inventoryItems', item.itemId), cleanForFirestore({
+          condition: 'Hilang',
+          notes: itemNotes,
+          updatedAt: now,
+        }), { merge: true });
+
+        logAudit(
+          'Borrow',
+          'RETURN_HILANG',
+          `Pengembalian barang dilaporkan HILANG: ${borrow.quantity} ${item.unit} ${item.name} oleh ${borrow.borrowerName}. Barang ditandai kondisi Hilang.`,
+          item.itemId,
+          item.itemCode,
+          `Kondisi: ${item.condition}`,
+          `Kondisi Baru: Hilang`
+        );
+      } else {
+        logAudit(
+          'Borrow',
+          'RETURN_GOOD',
+          `Pengembalian barang: ${borrow.quantity} ${item.unit} ${item.name} dikembalikan dalam kondisi ${returnCondition}. Tersedia kembali.`,
+          item.itemId,
+          item.itemCode,
+          `Status Peminjaman: ${borrow.status}`,
+          `Status: Returned (${returnCondition})`
+        );
+      }
+
+      return { success: true };
+    } catch (err: any) {
       handleFirestoreError(err, 'update', 'borrowRecords', borrowId);
-    });
-
-    if (returnCondition === 'Damaged') {
-      const desc =
-        damageDescriptionIfAny?.trim() ||
-        `Kerusakan dilaporkan saat pengembalian oleh ${borrow.borrowerName}: ${notes || 'Kondisi barang rusak/cacat.'}`;
-
-      const newMaint: MaintenanceRecord = {
-        maintenanceId: 'maint-' + Date.now(),
-        itemId: item.itemId,
-        itemCode: item.itemCode,
-        itemName: item.name,
-        quantity: borrow.quantity,
-        damageDescription: desc,
-        repairStatus: 'Reported',
-        reportedDate: actualReturnDate,
-        pic: currentUser.name,
-        repairCost: 0,
-        notes: `Berasal dari pengembalian peminjaman (${borrow.borrowId})`,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      setMaintenance((prev) => [newMaint, ...prev]);
-
-      setDoc(doc(db, 'maintenanceRecords', newMaint.maintenanceId), newMaint).catch((err) => {
-        handleFirestoreError(err, 'create', 'maintenanceRecords', newMaint.maintenanceId);
-      });
-
-      logAudit(
-        'Borrow',
-        'RETURN_DAMAGED',
-        `Pengembalian barang dalam kondisi RUSAK: ${borrow.quantity} ${item.unit} ${item.name}. Langsung dimasukkan ke antrean Maintenance.`,
-        item.itemId,
-        item.itemCode,
-        `Status Peminjaman: ${borrow.status}`,
-        `Status Pengembalian: Returned (Damaged). Maintenance ID: ${newMaint.maintenanceId}`
-      );
-    } else if (returnCondition === 'Hilang') {
-      const itemNotes = item.notes
-        ? `${item.notes} | [Hilang saat dipinjam oleh ${borrow.borrowerName} (${actualReturnDate})]`
-        : `[Hilang saat dipinjam oleh ${borrow.borrowerName} (${actualReturnDate})]`;
-
-      setItems((prev) =>
-        prev.map((i) =>
-          i.itemId === item.itemId
-            ? { ...i, condition: 'Hilang', notes: itemNotes, updatedAt: now }
-            : i
-        )
-      );
-
-      updateDoc(doc(db, 'inventoryItems', item.itemId), {
-        condition: 'Hilang',
-        notes: itemNotes,
-        updatedAt: now,
-      }).catch((err) => {
-        handleFirestoreError(err, 'update', 'inventoryItems', item.itemId);
-      });
-
-      logAudit(
-        'Borrow',
-        'RETURN_HILANG',
-        `Pengembalian barang dilaporkan HILANG: ${borrow.quantity} ${item.unit} ${item.name} oleh ${borrow.borrowerName}. Barang ditandai kondisi Hilang.`,
-        item.itemId,
-        item.itemCode,
-        `Kondisi: ${item.condition}`,
-        `Kondisi Baru: Hilang`
-      );
-    } else {
-      logAudit(
-        'Borrow',
-        'RETURN_GOOD',
-        `Pengembalian barang: ${borrow.quantity} ${item.unit} ${item.name} dikembalikan dalam kondisi ${returnCondition}. Tersedia kembali.`,
-        item.itemId,
-        item.itemCode,
-        `Status Peminjaman: ${borrow.status}`,
-        `Status: Returned (${returnCondition})`
-      );
+      return { success: false, error: `Gagal memproses pengembalian di Firestore: ${err?.message || err}` };
     }
-
-    return { success: true };
   };
 
   // 6. Create Maintenance
-  const createMaintenance = ({
+  const createMaintenance = async ({
     itemId,
     quantity,
     damageDescription,
@@ -1269,7 +1294,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     pic: string;
     repairCost?: number;
     notes?: string;
-  }): { success: boolean; error?: string } => {
+  }): Promise<{ success: boolean; error?: string }> => {
     if (!isStaff) return { success: false, error: 'Hanya Staf Lab yang dapat mencatat maintenance.' };
 
     const item = items.find((i) => i.itemId === itemId);
@@ -1308,25 +1333,29 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     setMaintenance((prev) => [newMaint, ...prev]);
 
-    setDoc(doc(db, 'maintenanceRecords', newMaint.maintenanceId), newMaint).catch((err) => {
+    try {
+      await setDoc(doc(db, 'maintenanceRecords', newMaint.maintenanceId), cleanForFirestore(newMaint));
+
+      logAudit(
+        'Maintenance',
+        'CREATE_MAINTENANCE',
+        `Mencatat kerusakan ${quantity} ${item.unit} ${item.name} (${item.itemCode}): "${damageDescription}"`,
+        item.itemId,
+        item.itemCode,
+        `Tersedia sebelumnya: ${stock.availableQuantity}`,
+        `Status Maintenance: Reported (Qty: ${quantity})`
+      );
+
+      return { success: true };
+    } catch (err: any) {
       handleFirestoreError(err, 'create', 'maintenanceRecords', newMaint.maintenanceId);
-    });
-
-    logAudit(
-      'Maintenance',
-      'CREATE_MAINTENANCE',
-      `Mencatat kerusakan ${quantity} ${item.unit} ${item.name} (${item.itemCode}): "${damageDescription}"`,
-      item.itemId,
-      item.itemCode,
-      `Tersedia sebelumnya: ${stock.availableQuantity}`,
-      `Status Maintenance: Reported (Qty: ${quantity})`
-    );
-
-    return { success: true };
+      setMaintenance((prev) => prev.filter((m) => m.maintenanceId !== newMaint.maintenanceId));
+      return { success: false, error: `Gagal menyimpan maintenance ke Firestore: ${err?.message || err}` };
+    }
   };
 
   // 7. Update Maintenance Status
-  const updateMaintenanceStatus = ({
+  const updateMaintenanceStatus = async ({
     maintenanceId,
     repairStatus,
     pic,
@@ -1342,7 +1371,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     notes?: string;
     resolvedCondition?: 'Good' | 'Fair';
     retireUnitsIfNotRepairable?: boolean;
-  }): { success: boolean; error?: string } => {
+  }): Promise<{ success: boolean; error?: string }> => {
     if (!isStaff) return { success: false, error: 'Hanya Staf Lab yang dapat mengubah status maintenance.' };
 
     const rec = maintenance.find((m) => m.maintenanceId === maintenanceId);
@@ -1374,88 +1403,87 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       prev.map((m) => (m.maintenanceId === maintenanceId ? { ...m, ...updatedMaintData } : m))
     );
 
-    updateDoc(doc(db, 'maintenanceRecords', maintenanceId), updatedMaintData).catch((err) => {
-      handleFirestoreError(err, 'update', 'maintenanceRecords', maintenanceId);
-    });
+    try {
+      await setDoc(doc(db, 'maintenanceRecords', maintenanceId), cleanForFirestore(updatedMaintData), { merge: true });
 
-    if (repairStatus === 'Repaired') {
-      if (item.condition === 'Damaged' || item.condition === 'Under Maintenance' || item.condition === 'Hilang') {
-        setItems((prev) =>
-          prev.map((i) =>
-            i.itemId === item.itemId ? { ...i, condition: resolvedCondition, updatedAt: now } : i
-          )
-        );
+      if (repairStatus === 'Repaired') {
+        if (item.condition === 'Damaged' || item.condition === 'Under Maintenance' || item.condition === 'Hilang') {
+          setItems((prev) =>
+            prev.map((i) =>
+              i.itemId === item.itemId ? { ...i, condition: resolvedCondition, updatedAt: now } : i
+            )
+          );
 
-        updateDoc(doc(db, 'inventoryItems', item.itemId), {
-          condition: resolvedCondition,
-          updatedAt: now,
-        }).catch((err) => {
-          handleFirestoreError(err, 'update', 'inventoryItems', item.itemId);
-        });
-      }
-
-      logAudit(
-        'Maintenance',
-        'MAINTENANCE_REPAIRED',
-        `Perbaikan selesai untuk ${rec.quantity} ${item.unit} ${item.name}. Barang kembali ke stok normal dengan kondisi ${resolvedCondition}.`,
-        item.itemId,
-        item.itemCode,
-        `Status: ${prevStatus}`,
-        `Status: Repaired (Kondisi: ${resolvedCondition}, Biaya: Rp ${(repairCost ?? rec.repairCost).toLocaleString('id-ID')})`
-      );
-    } else if (repairStatus === 'Not Repairable') {
-      if (retireUnitsIfNotRepairable) {
-        const newTotal = Math.max(0, item.quantity - rec.quantity);
-        setItems((prev) =>
-          prev.map((i) =>
-            i.itemId === item.itemId ? { ...i, quantity: newTotal, updatedAt: now } : i
-          )
-        );
-
-        updateDoc(doc(db, 'inventoryItems', item.itemId), {
-          quantity: newTotal,
-          updatedAt: now,
-        }).catch((err) => {
-          handleFirestoreError(err, 'update', 'inventoryItems', item.itemId);
-        });
+          await setDoc(doc(db, 'inventoryItems', item.itemId), cleanForFirestore({
+            condition: resolvedCondition,
+            updatedAt: now,
+          }), { merge: true });
+        }
 
         logAudit(
           'Maintenance',
-          'RETIRE_DAMAGED_ITEM',
-          `Penghapusan aset (Write-off): ${rec.quantity} unit ${item.name} dihapus dari total inventaris karena rusak permanen.`,
-          item.itemId,
-          item.itemCode,
-          `Total Stok: ${item.quantity}`,
-          `Total Stok Baru: ${newTotal}`
-        );
-      } else {
-        logAudit(
-          'Maintenance',
-          'NOT_REPAIRABLE',
-          `Status perbaikan ${item.name} dinyatakan tidak dapat diperbaiki (Not Repairable). Tidak dimasukkan kembali ke available stock.`,
+          'MAINTENANCE_REPAIRED',
+          `Perbaikan selesai untuk ${rec.quantity} ${item.unit} ${item.name}. Barang kembali ke stok normal dengan kondisi ${resolvedCondition}.`,
           item.itemId,
           item.itemCode,
           `Status: ${prevStatus}`,
-          'Status: Not Repairable'
+          `Status: Repaired (Kondisi: ${resolvedCondition}, Biaya: Rp ${(repairCost ?? rec.repairCost).toLocaleString('id-ID')})`
+        );
+      } else if (repairStatus === 'Not Repairable') {
+        if (retireUnitsIfNotRepairable) {
+          const newTotal = Math.max(0, item.quantity - rec.quantity);
+          setItems((prev) =>
+            prev.map((i) =>
+              i.itemId === item.itemId ? { ...i, quantity: newTotal, updatedAt: now } : i
+            )
+          );
+
+          await setDoc(doc(db, 'inventoryItems', item.itemId), cleanForFirestore({
+            quantity: newTotal,
+            updatedAt: now,
+          }), { merge: true });
+
+          logAudit(
+            'Maintenance',
+            'RETIRE_DAMAGED_ITEM',
+            `Penghapusan aset (Write-off): ${rec.quantity} unit ${item.name} dihapus dari total inventaris karena rusak permanen.`,
+            item.itemId,
+            item.itemCode,
+            `Total Stok: ${item.quantity}`,
+            `Total Stok Baru: ${newTotal}`
+          );
+        } else {
+          logAudit(
+            'Maintenance',
+            'NOT_REPAIRABLE',
+            `Status perbaikan ${item.name} dinyatakan tidak dapat diperbaiki (Not Repairable). Tidak dimasukkan kembali ke available stock.`,
+            item.itemId,
+            item.itemCode,
+            `Status: ${prevStatus}`,
+            'Status: Not Repairable'
+          );
+        }
+      } else {
+        logAudit(
+          'Maintenance',
+          'UPDATE_MAINTENANCE_STATUS',
+          `Update maintenance ${item.name}: ${prevStatus} -> ${repairStatus}`,
+          item.itemId,
+          item.itemCode,
+          prevStatus,
+          repairStatus
         );
       }
-    } else {
-      logAudit(
-        'Maintenance',
-        'UPDATE_MAINTENANCE_STATUS',
-        `Update maintenance ${item.name}: ${prevStatus} -> ${repairStatus}`,
-        item.itemId,
-        item.itemCode,
-        prevStatus,
-        repairStatus
-      );
-    }
 
-    return { success: true };
+      return { success: true };
+    } catch (err: any) {
+      handleFirestoreError(err, 'update', 'maintenanceRecords', maintenanceId);
+      return { success: false, error: `Gagal memperbarui maintenance di Firestore: ${err?.message || err}` };
+    }
   };
 
   // 8. Create or Update Restock Record
-  const createOrUpdateRestock = ({
+  const createOrUpdateRestock = async ({
     itemId,
     recommendedQuantity,
     targetStock,
@@ -1465,7 +1493,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     recommendedQuantity: number;
     targetStock?: number;
     notes?: string;
-  }): { success: boolean; error?: string } => {
+  }): Promise<{ success: boolean; error?: string }> => {
     if (!isStaff) return { success: false, error: 'Hanya Staf Lab yang dapat membuat permintaan restock.' };
 
     const item = items.find((i) => i.itemId === itemId);
@@ -1494,19 +1522,24 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         prev.map((r) => (r.restockId === existing.restockId ? { ...r, ...restockUpdate } : r))
       );
 
-      updateDoc(doc(db, 'restockRecords', existing.restockId), restockUpdate).catch((err) => {
-        handleFirestoreError(err, 'update', 'restockRecords', existing.restockId);
-      });
+      try {
+        await setDoc(doc(db, 'restockRecords', existing.restockId), cleanForFirestore(restockUpdate), { merge: true });
 
-      logAudit(
-        'Restock',
-        'UPDATE_RESTOCK',
-        `Memperbarui rencana restock ${item.name} (${item.itemCode}): Qty rekomendasi ${recommendedQuantity}`,
-        item.itemId,
-        item.itemCode,
-        `Rec Qty: ${existing.recommendedQuantity}`,
-        `Rec Qty: ${recommendedQuantity}`
-      );
+        logAudit(
+          'Restock',
+          'UPDATE_RESTOCK',
+          `Memperbarui rencana restock ${item.name} (${item.itemCode}): Qty rekomendasi ${recommendedQuantity}`,
+          item.itemId,
+          item.itemCode,
+          `Rec Qty: ${existing.recommendedQuantity}`,
+          `Rec Qty: ${recommendedQuantity}`
+        );
+
+        return { success: true };
+      } catch (err: any) {
+        handleFirestoreError(err, 'update', 'restockRecords', existing.restockId);
+        return { success: false, error: `Gagal memperbarui restock di Firestore: ${err?.message || err}` };
+      }
     } else {
       const newRestock: RestockRecord = {
         restockId: 'rst-' + Date.now(),
@@ -1527,26 +1560,30 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       setRestocks((prev) => [newRestock, ...prev]);
 
-      setDoc(doc(db, 'restockRecords', newRestock.restockId), newRestock).catch((err) => {
+      try {
+        await setDoc(doc(db, 'restockRecords', newRestock.restockId), cleanForFirestore(newRestock));
+
+        logAudit(
+          'Restock',
+          'CREATE_RESTOCK',
+          `Membuat permintaan restock untuk ${item.name} (${recommendedQuantity} ${item.unit})`,
+          item.itemId,
+          item.itemCode,
+          '-',
+          `Status: To Buy, Rekomendasi: ${recommendedQuantity}`
+        );
+
+        return { success: true };
+      } catch (err: any) {
         handleFirestoreError(err, 'create', 'restockRecords', newRestock.restockId);
-      });
-
-      logAudit(
-        'Restock',
-        'CREATE_RESTOCK',
-        `Membuat permintaan restock untuk ${item.name} (${recommendedQuantity} ${item.unit})`,
-        item.itemId,
-        item.itemCode,
-        '-',
-        `Status: To Buy, Rekomendasi: ${recommendedQuantity}`
-      );
+        setRestocks((prev) => prev.filter((r) => r.restockId !== newRestock.restockId));
+        return { success: false, error: `Gagal membuat restock di Firestore: ${err?.message || err}` };
+      }
     }
-
-    return { success: true };
   };
 
   // 9. Order Restock (To Buy -> Ordered)
-  const orderRestock = ({
+  const orderRestock = async ({
     restockId,
     supplier,
     orderedDate,
@@ -1556,7 +1593,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     supplier: string;
     orderedDate: string;
     notes?: string;
-  }): { success: boolean; error?: string } => {
+  }): Promise<{ success: boolean; error?: string }> => {
     if (!isStaff) return { success: false, error: 'Hanya Staf Lab yang dapat memesan restock.' };
 
     const rec = restocks.find((r) => r.restockId === restockId);
@@ -1577,25 +1614,28 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       prev.map((r) => (r.restockId === restockId ? { ...r, ...orderUpdate } : r))
     );
 
-    updateDoc(doc(db, 'restockRecords', restockId), orderUpdate).catch((err) => {
+    try {
+      await setDoc(doc(db, 'restockRecords', restockId), cleanForFirestore(orderUpdate), { merge: true });
+
+      logAudit(
+        'Restock',
+        'ORDER_RESTOCK',
+        `Pesanan restock dibuat untuk ${rec.itemName}: ${rec.recommendedQuantity} unit ke supplier "${supplier}"`,
+        rec.itemId,
+        rec.itemCode,
+        'Status: To Buy',
+        `Status: Ordered (Supplier: ${supplier}, Tgl: ${orderedDate})`
+      );
+
+      return { success: true };
+    } catch (err: any) {
       handleFirestoreError(err, 'update', 'restockRecords', restockId);
-    });
-
-    logAudit(
-      'Restock',
-      'ORDER_RESTOCK',
-      `Pesanan restock dibuat untuk ${rec.itemName}: ${rec.recommendedQuantity} unit ke supplier "${supplier}"`,
-      rec.itemId,
-      rec.itemCode,
-      'Status: To Buy',
-      `Status: Ordered (Supplier: ${supplier}, Tgl: ${orderedDate})`
-    );
-
-    return { success: true };
+      return { success: false, error: `Gagal memesan restock di Firestore: ${err?.message || err}` };
+    }
   };
 
   // 10. Receive Restock (Ordered -> Received)
-  const receiveRestock = ({
+  const receiveRestock = async ({
     restockId,
     receivedQuantity,
     receivedDate,
@@ -1605,7 +1645,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     receivedQuantity: number;
     receivedDate: string;
     notes?: string;
-  }): { success: boolean; error?: string } => {
+  }): Promise<{ success: boolean; error?: string }> => {
     if (!isStaff) return { success: false, error: 'Hanya Staf Lab yang dapat memproses penerimaan barang.' };
 
     const rec = restocks.find((r) => r.restockId === restockId);
@@ -1648,29 +1688,29 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       )
     );
 
-    updateDoc(doc(db, 'restockRecords', restockId), receiveUpdate).catch((err) => {
+    try {
+      await setDoc(doc(db, 'restockRecords', restockId), cleanForFirestore(receiveUpdate), { merge: true });
+      await setDoc(doc(db, 'inventoryItems', item.itemId), cleanForFirestore({
+        quantity: newQuantity,
+        condition: resolvedCondition,
+        updatedAt: now,
+      }), { merge: true });
+
+      logAudit(
+        'Restock',
+        'RECEIVE_RESTOCK',
+        `Penerimaan barang restock: ${receivedQuantity} ${item.unit} ${item.name} telah diterima fisik dan ditambahkan ke stok.`,
+        item.itemId,
+        item.itemCode,
+        `Stok Lama: ${prevQuantity}`,
+        `Stok Baru: ${newQuantity} (+${receivedQuantity})`
+      );
+
+      return { success: true };
+    } catch (err: any) {
       handleFirestoreError(err, 'update', 'restockRecords', restockId);
-    });
-
-    updateDoc(doc(db, 'inventoryItems', item.itemId), {
-      quantity: newQuantity,
-      condition: resolvedCondition,
-      updatedAt: now,
-    }).catch((err) => {
-      handleFirestoreError(err, 'update', 'inventoryItems', item.itemId);
-    });
-
-    logAudit(
-      'Restock',
-      'RECEIVE_RESTOCK',
-      `Penerimaan barang restock: ${receivedQuantity} ${item.unit} ${item.name} telah diterima fisik dan ditambahkan ke stok.`,
-      item.itemId,
-      item.itemCode,
-      `Stok Lama: ${prevQuantity}`,
-      `Stok Baru: ${newQuantity} (+${receivedQuantity})`
-    );
-
-    return { success: true };
+      return { success: false, error: `Gagal memproses penerimaan di Firestore: ${err?.message || err}` };
+    }
   };
 
   // Purge all dummy data from memory, localStorage, and Firestore (retaining only genuine user data)

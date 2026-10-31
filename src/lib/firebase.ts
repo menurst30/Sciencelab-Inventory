@@ -50,3 +50,27 @@ export async function testFirestoreConnection(): Promise<{ connected: boolean; e
     return { connected: false, error: err?.message || String(err) };
   }
 }
+
+/**
+ * Recursively removes undefined fields from an object or array.
+ * Firestore rejects documents containing `undefined` values with an error.
+ */
+export function cleanForFirestore<T>(data: T): T {
+  if (data === null || data === undefined) {
+    return data;
+  }
+  if (Array.isArray(data)) {
+    return data.map((item) => cleanForFirestore(item)) as unknown as T;
+  }
+  if (typeof data === 'object') {
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data as Record<string, any>)) {
+      if (value !== undefined) {
+        cleaned[key] = cleanForFirestore(value);
+      }
+    }
+    return cleaned as T;
+  }
+  return data;
+}
+
